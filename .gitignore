@@ -1,0 +1,7 @@
+*.o
+
+main
+checker
+simulator
+
+*.bin
