@@ -1,6 +1,6 @@
 
 CC = g++
-EXEC = simulator checker main
+EXEC = simulator checker main listen_pps
 
 CXXFLAGS = -Inetwork -Wall -pthread
 
@@ -19,6 +19,9 @@ checker: checker.cpp serial.o ring.o
 main: main.o ring.o serial.o
 	make -C network all
 	$(CC) -o $@ $^ network/*.o -pthread
+
+listen_pps: listen_pps.c serial.o
+	$(CC) -o $@ $^
 
 %.o: %.c %.h
 	$(CC) -c $< -o $@

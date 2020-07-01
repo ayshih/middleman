@@ -56,6 +56,7 @@
 #include <unistd.h>  // read()
 #include <sys/io.h>  // iopl()
 #include <poll.h>
+#include <sys/ioctl.h>
 
 #include "UDPSender.hpp"
 #include "UDPReceiver.hpp"
@@ -120,6 +121,8 @@ void *TelemetryHousekeepingThread(void *threadargs);
 
 void *SerialListenerThread(void *threadargs);
 void *SerialParserThread(void *threadargs);
+
+void *InternalPPSThread(void *threadargs);
 
 void writeCurrentUT(char *buffer);
 void printLogTimestamp();
@@ -1020,6 +1023,61 @@ void *SerialParserThread(void *threadargs)
 }
 
 
+void pps_tick()
+{
+    int RTS_flag;
+    RTS_flag = TIOCM_RTS;
+
+    // Assert the RTS line
+    for(int i = 0; i < 8; i++) {
+        ioctl(device_fd[imager_to_device_map[i]], TIOCMBIS, &RTS_flag);
+    }
+
+    usleep_force(5000);
+
+    // Clear the RTS line
+    for(int i = 0; i < 8; i++) {
+        ioctl(device_fd[imager_to_device_map[i]], TIOCMBIC, &RTS_flag);
+    }
+}
+
+
+void *InternalPPSThread(void *threadargs)
+{
+    Thread_data *my_data = (Thread_data *) threadargs;
+    int tid = my_data->thread_id;
+
+    printf("InternalPPS thread #%d\n", tid);
+
+    timespec assert_time, remaining;
+    clock_gettime(CLOCK_REALTIME, &assert_time);
+    assert_time.tv_sec += 1;
+
+    timespec now;
+
+    while(!stop_message[tid])
+    {
+        while(clock_nanosleep(CLOCK_REALTIME, TIMER_ABSTIME, &assert_time, &remaining) == -1) {};
+
+        if(MODE_TIMING) {
+            clock_gettime(CLOCK_REALTIME, &now);
+        }
+
+        pps_tick();
+
+        if(MODE_TIMING) {
+            printf("PPS trigger delay was %f us\n", (now.tv_nsec - assert_time.tv_nsec) / 1000.);
+        }
+
+        assert_time.tv_sec += 1;
+    }
+
+    printf("InternalPPS thread #%d exiting\n", tid);
+    started[tid] = false;
+    pthread_exit( NULL );
+}
+
+
 void start_thread(void *(*routine) (void *), const Thread_data *tdata)
 {
     pthread_mutex_lock(&mutexStartThread);
@@ -1110,6 +1168,8 @@ void start_all_workers()
         start_thread(SerialListenerThread, &tdata); 
         start_thread(SerialParserThread, &tdata);
     }
+
+    start_thread(InternalPPSThread, NULL);
 }
 
 int main(int argc, char *argv[])
@@ -1141,7 +1201,7 @@ int main(int argc, char *argv[])
                         std::cout << "Command-line options:\n";
                         std::cout << "-i<ip>  Send telemetry packets to this IP (instead of the FC's IP)\n";
                         std::cout << "-n      Display network packets (can be crazy!)\n";
-                        std::cout << "-t      Perform timing tests\n";
+                        std::cout << "-t      Display timing information\n";
                         std::cout << "-v      Verbose messages\n";
                         return -1;
                     default:
