@@ -4,5 +4,6 @@ main
 checker
 simulator
 listen_pps
+log_telemetry
 
 *.bin
