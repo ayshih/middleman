@@ -78,6 +78,7 @@ char ip_tm[20];
 bool MODE_NETWORK = false;
 bool MODE_TIMING = false;
 bool MODE_VERBOSE = false;
+bool MODE_SIMULATED_DATA = false;
 
 // UDP packet queues
 TelemetryPacketQueue tm_packet_queue; //for sending
@@ -982,13 +983,15 @@ void *SerialParserThread(void *threadargs)
                 imager_counts[my_data->system_id & 0b111]++;
                 tp_eventgroup.append_bytes(packet_buffer, packet_size);
 
-                int number;
-                memcpy(&number, packet_buffer + 2, sizeof(number));
+                if(MODE_SIMULATED_DATA) { // verify the incrementing pattern in simulated data
+                    int number;
+                    memcpy(&number, packet_buffer + 2, sizeof(number));
 
-                if(number != last_number + 1) {
-                    fprintf(stderr, "Desync with %d dropped packets (%d, %d)\n", number - last_number - 1, last_number, number);
+                    if(number != last_number + 1) {
+                        fprintf(stderr, "Desync with %d dropped packets (%d, %d)\n", number - last_number - 1, last_number, number);
+                    }
+                    last_number = number;
                 }
-                last_number = number;
 
                 // Force out an event-group packet if there are 100 events
                 if(events_in_group == 100) {
@@ -1192,6 +1195,10 @@ int main(int argc, char *argv[])
                         std::cout << "Network diagnostics mode\n";
                         MODE_NETWORK = true;
                         break;
+                    case 's':
+                        std::cout << "Simulated data mode\n";
+                        MODE_SIMULATED_DATA = true;
+                        break;
                     case 't':
                         std::cout << "Timing mode\n";
                         MODE_TIMING = true;
@@ -1204,6 +1211,7 @@ int main(int argc, char *argv[])
                         std::cout << "Command-line options:\n";
                         std::cout << "-i<ip>  Send telemetry packets to this IP (instead of the FC's IP)\n";
                         std::cout << "-n      Display network packets (can be crazy!)\n";
+                        std::cout << "-s      Verify simulated data in the detector packets\n";
                         std::cout << "-t      Display timing information\n";
                         std::cout << "-v      Verbose messages\n";
                         return -1;
