@@ -1066,7 +1066,10 @@ void *InternalPPSThread(void *threadargs)
         pps_tick();
 
         if(MODE_TIMING) {
-            printf("PPS trigger delay was %f us\n", (now.tv_nsec - assert_time.tv_nsec) / 1000.);
+            printf("PPS trigger start for %ld s (%ld us) was delayed by %f us\n",
+                   assert_time.tv_sec,
+                   assert_time.tv_nsec / 1000,
+                   (now.tv_nsec - assert_time.tv_nsec) / 1000.);
         }
 
         assert_time.tv_sec += 1;

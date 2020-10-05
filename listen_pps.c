@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <time.h>
 
 #include "serial.h"
 
@@ -30,7 +31,9 @@ int main(int argc, char** argv)
     int fd = setup_serial_port(atoi(argv[1]));
 
     printf("Device opened, CTS state: %d\n", get_cts_state(fd));
-  
+
+    timespec now;
+
     // detect CTS changes forever
     int i=0;
     while(1)
@@ -43,5 +46,8 @@ int main(int argc, char** argv)
             printf("ioctl(TIOCMIWAIT) failed: %d: %s\n", errno, strerror(errno));
             return -1;
         }
+
+        clock_gettime(CLOCK_REALTIME, &now);
+        printf("State was changed at %ld s (%ld us)\n", now.tv_sec, now.tv_nsec / 1000);
     }
 }
