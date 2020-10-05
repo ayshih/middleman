@@ -44,6 +44,24 @@ int main(int argc, char *argv[])
                 log.flush();
                 if (reported_length+16 != packet_length) {
                     std::cout << "  Length mismatch: reported+16 is " << reported_length+16 << ", actual is " << packet_length << std::endl;
+                } else {
+                    // Print out the information from the imager-statistics packet
+                    if (tp.getSystemID() == 0xA0 && tp.getTmType() == 0x0C) {
+                        uint16_t imager_counts[8], buffer_bytes[8], bad_bytes[8];
+                        for (int i = 0; i < 8; i++) {
+                            tp >> imager_counts[i];
+                            tp >> buffer_bytes[i];
+                            tp >> bad_bytes[i];
+                        }
+                        printf("[%f s]", (uint64_t)tp.getSystemTime() / 1e7);
+                        printf("\nImager counts:");
+                        for (int i = 0; i < 8; i++) printf(" %d", imager_counts[i]);
+                        printf("\nBytes remaining in buffer:");
+                        for (int i = 0; i < 8; i++) printf(" %d", buffer_bytes[i]);
+                        printf("\nBad bytes seen:");
+                        for (int i = 0; i < 8; i++) printf(" %d", bad_bytes[i]);
+                        printf("\n");
+                    }
                 }
             } else {
                 printf("  Invalid packet! %02x%02x %02x%02x %02x %02x\n", packet[0], packet[1], packet[2], packet[3], packet[4], packet[5]);

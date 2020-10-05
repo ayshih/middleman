@@ -36,6 +36,8 @@
 
 //BOOMS telemetry types
 #define TM_ACK          0x01
+#define TM_HOUSEKEEPING 0x02
+#define TM_IMG_STATS    0x0C
 
 #define TM_EVENTGROUP   0xC0
 
@@ -134,6 +136,7 @@ bool set_if_different(T& variable, T value); //returns true if the value is diff
 
 uint16_t imager_counts[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 uint32_t imager_bytes[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+uint32_t imager_bad_bytes[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 
 int device_fd[32];
 RingBuffer ring_buffer[32];
@@ -350,17 +353,19 @@ void *TelemetryHousekeepingThread(void *threadargs)
         tm_frame_sequence_number++;
 
         uint16_t local_imager_counts[8], buffer_sizes[8];
-        uint32_t local_imager_bytes[8];
+        uint32_t local_imager_bytes[8], local_imager_bad_bytes[8];
 
         memcpy(&local_imager_counts, imager_counts, sizeof(imager_counts));
         memset(&imager_counts, 0, sizeof(imager_counts));
         memcpy(&local_imager_bytes, imager_bytes, sizeof(imager_bytes));
         memset(&imager_bytes, 0, sizeof(imager_bytes));
+        memcpy(&local_imager_bad_bytes, imager_bad_bytes, sizeof(imager_bad_bytes));
+        memset(&imager_bad_bytes, 0, sizeof(imager_bad_bytes));
 
         uint8_t i;
         printLogTimestamp();
-        printf("\nImager bytes:");
-        for (i = 0; i < 8; i++) printf(" %d", local_imager_bytes[i]);
+        printf("\nImager bytes [all(bad)]:");
+        for (i = 0; i < 8; i++) printf(" %d(%d)", local_imager_bytes[i], local_imager_bad_bytes[i]);
         printf("\nImager counts:");
         for (i = 0; i < 8; i++) printf(" %d", local_imager_counts[i]);
         printf("\nBuffer sizes:");
@@ -369,6 +374,14 @@ void *TelemetryHousekeepingThread(void *threadargs)
             printf(" %d", buffer_sizes[i]);
         }
         printf("\n");
+
+        TelemetryPacket tp(SYS_ID_MM, TM_IMG_STATS, tm_frame_sequence_number, current_monotonic_time());
+        for (i = 0; i < 8; i++) {
+            tp << (uint16_t)local_imager_counts[i];
+            tp << (uint16_t)buffer_sizes[i];
+            tp << (uint16_t)local_imager_bad_bytes[i];
+        }
+        tm_packet_queue << tp;
 
 	/*
         TelemetryPacket tp(SYS_ID_ASP, TM_HOUSEKEEPING, tm_frame_sequence_number, oeb_get_clock());
@@ -969,6 +982,7 @@ void *SerialParserThread(void *threadargs)
         while((packet_size = ring_buffer[device_id].smart_pop(packet_buffer)) != 0) {
             if(packet_size == -1) {
                 fprintf(stderr, "Skipping a byte on device %d\n", device_id);
+                imager_bad_bytes[my_data->system_id & 0b111]++;
                 continue;
             }
 
@@ -989,6 +1003,7 @@ void *SerialParserThread(void *threadargs)
 
                     if(number != last_number + 1) {
                         fprintf(stderr, "Desync with %d dropped packets (%d, %d)\n", number - last_number - 1, last_number, number);
+                        imager_bad_bytes[my_data->system_id & 0b111] += packet_size;
                     }
                     last_number = number;
                 }
@@ -1005,6 +1020,7 @@ void *SerialParserThread(void *threadargs)
                 tm_packet_queue << tp_hk;
             } else {
                 fprintf(stderr, "Unknown serial packet of type 0b%d%d%d\n", packet_type & 0b100 >> 2, packet_type & 0b010 >> 1, packet_type & 0b001);
+                imager_bad_bytes[my_data->system_id & 0b111] += packet_size;
             }
         }
 
