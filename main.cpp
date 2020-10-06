@@ -363,17 +363,18 @@ void *TelemetryHousekeepingThread(void *threadargs)
         memset(&imager_bad_bytes, 0, sizeof(imager_bad_bytes));
 
         uint8_t i;
+        for (i = 0; i < 8; i++) buffer_sizes[i] = ring_buffer[imager_to_device_map[i]].size();
+
+        /*
         printLogTimestamp();
         printf("\nImager bytes [all(bad)]:");
         for (i = 0; i < 8; i++) printf(" %d(%d)", local_imager_bytes[i], local_imager_bad_bytes[i]);
         printf("\nImager counts:");
         for (i = 0; i < 8; i++) printf(" %d", local_imager_counts[i]);
         printf("\nBuffer sizes:");
-        for (i = 0; i < 8; i++) {
-            buffer_sizes[i] = ring_buffer[imager_to_device_map[i]].size();
-            printf(" %d", buffer_sizes[i]);
-        }
+        for (i = 0; i < 8; i++) printf(" %d", buffer_sizes[i]);
         printf("\n");
+        */
 
         TelemetryPacket tp(SYS_ID_MM, TM_IMG_STATS, tm_frame_sequence_number, current_monotonic_time());
         for (i = 0; i < 8; i++) {
