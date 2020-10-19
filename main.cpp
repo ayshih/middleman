@@ -44,6 +44,13 @@
 //BOOMS commands, shared
 #define KEY_NULL                 0x00
 
+//MM commands
+#define KEY_DESTINATION_IP      0xA1
+#define KEY_RESTART_WORKERS     0xF0
+#define KEY_RESTART_ALL         0xF1
+#define KEY_EXIT                0xF2
+#define KEY_SHUTDOWN            0xFF
+
 #include <cstring>
 #include <stdio.h>      /* for printf() and fprintf() */
 #include <pthread.h>    /* for multithreading */
@@ -82,6 +89,9 @@ bool MODE_TIMING = false;
 bool MODE_VERBOSE = false;
 bool MODE_SIMULATED_DATA = false;
 
+// interthread signals
+bool SIGNAL_RESET_TELEMETRYSENDER = false;
+
 // UDP packet queues
 TelemetryPacketQueue tm_packet_queue; //for sending
 CommandPacketQueue cm_packet_queue; //for receiving
@@ -116,10 +126,10 @@ void *TelemetrySenderThread(void *threadargs);
 void *TelemetryHousekeepingThread(void *threadargs);
 //void *TelemetryScienceThread(void *threadargs);
 
-//void *CommandListenerThread(void *threadargs);
-//void cmd_process_command(CommandPacket &cp);
-//void *CommandHandlerThread(void *threadargs);
-//void queue_cmd_proc_ack_tmpacket( uint8_t error_code, uint64_t response );
+void *CommandListenerThread(void *threadargs);
+void cmd_process_command(CommandPacket &cp);
+void *CommandHandlerThread(void *threadargs);
+void queue_cmd_proc_ack_tmpacket( uint8_t error_code, uint64_t response );
 //void queue_settings_tmpacket();
 
 void *SerialListenerThread(void *threadargs);
@@ -295,16 +305,24 @@ void *TelemetrySenderThread(void *threadargs)
         log.open(filename, std::ofstream::binary);
     }
 
-    TelemetrySender telSender(ip_tm, (unsigned short) PORT_TM);
+    TelemetrySender *telSender = new TelemetrySender(ip_tm, (unsigned short) PORT_TM);
 
     while(!stop_message[tid])
     {
         usleep_force(USLEEP_TM_SEND);
 
+        if (SIGNAL_RESET_TELEMETRYSENDER) {
+            std::cout << "Reseting TelemetrySender due to IP change\n";
+            TelemetrySender *old = telSender;
+            telSender = new TelemetrySender(ip_tm, (unsigned short) PORT_TM);
+            delete old;
+            SIGNAL_RESET_TELEMETRYSENDER = false;
+        }
+
         if( !tm_packet_queue.empty() ){
             TelemetryPacket tp(NULL);
             tm_packet_queue >> tp;
-            telSender.send( &tp );
+            telSender->send( &tp );
             if(MODE_NETWORK) std::cout << "TelemetrySender: " << tp.getLength() << " bytes, " << tp << std::endl;
 
             if (LOG_PACKETS && log.is_open()) {
@@ -323,6 +341,7 @@ void *TelemetrySenderThread(void *threadargs)
 
     printf("TelemetrySender thread #%ld exiting\n", tid);
 
+    delete telSender;
     if (LOG_PACKETS && log.is_open()) log.close();
 
     started[tid] = false;
@@ -544,6 +563,7 @@ void *TelemetryScienceThread(void *threadargs)
     started[tid] = false;
     pthread_exit( NULL );
 }
+*/
 
 void *CommandListenerThread(void *threadargs)
 {
@@ -555,6 +575,7 @@ void *CommandListenerThread(void *threadargs)
     CommandReceiver comReceiver( (unsigned short) PORT_CMD);
     comReceiver.init_connection();
 
+    /*
     // If talking to the flight computer, synchronize the clock on the odds & ends board
     // This code is here to make sure that we are ready to receive the imminent sync command
     if (strncmp(ip_tm, IP_FC, 20) == 0) {
@@ -564,6 +585,7 @@ void *CommandListenerThread(void *threadargs)
         CommandPacket cp(0x0A, 0x51, 0xF0);
         cmdSender.send( &cp );
     }
+    */
 
     while(!stop_message[tid])
     {
@@ -606,11 +628,12 @@ void *CommandListenerThread(void *threadargs)
 
 void queue_cmd_proc_ack_tmpacket( uint8_t error_code, uint64_t response )
 {
-    TelemetryPacket ack_tp(SYS_ID_ASP, TM_ACK, command_sequence_number, oeb_get_clock());
+    TelemetryPacket ack_tp(SYS_ID_MM, TM_ACK, command_sequence_number, current_monotonic_time());
     ack_tp << error_code << response;
     tm_packet_queue << ack_tp;
 }
 
+/*
 void queue_settings_tmpacket()
 {
     static uint16_t counter = 0;
@@ -630,6 +653,7 @@ void queue_settings_tmpacket()
 
     tm_packet_queue << tp;
 }
+*/
 
 void *CommandHandlerThread(void *threadargs)
 {
@@ -639,254 +663,55 @@ void *CommandHandlerThread(void *threadargs)
     uint64_t response = 0;
     my_data = (struct Thread_data *) threadargs;
 
-    uint64_t value = *(uint64_t *)(my_data->payload);
+    //uint64_t value = *(uint64_t *)(my_data->payload);
+    uint8_t *bytes = (uint8_t *)(my_data->payload);
 
     switch(my_data->system_id)
     {
-        case SYS_ID_ASP:
+        case SYS_ID_MM:
             switch(my_data->command_key)
             {
-                case KEY_POINTING_OFF: //Turn OFF pointing mode
-                    if(MODE_POINTING) {
-                        std::cout << "Turning OFF pointing mode\n";
-                        MODE_POINTING = false;
+                case KEY_DESTINATION_IP:
+                    // payload should be the four bytes of the IP
+                    if (my_data->payload_size == 4) {
+                        char new_ip_tm[16];
+                        sprintf(new_ip_tm, "%d.%d.%d.%d", bytes[0], bytes[1], bytes[2], bytes[3]);
+                        std::cout << "Destination IP for telmetry will be changed from " << ip_tm << " to " << new_ip_tm << std::endl;
+                        strcpy(ip_tm, new_ip_tm);
+                        SIGNAL_RESET_TELEMETRYSENDER = true;
                         error_code = 0;
-                    } else {
-                        error_code = ACK_NOACTION;
-                    }
-                    break;
-                case KEY_POINTING_ON: //Turn ON pointing mode
-                    if(!MODE_POINTING) {
-                        std::cout << "Turning ON pointing mode\n";
-                        MODE_POINTING = true;
-                        error_code = 0;
-                    } else {
-                        error_code = ACK_NOACTION;
-                    }
-                    break;
-                case KEY_SET_CLOCK_FOR_SYNC: //Set clock value to sync to
-                    value &= 0xFFFFFFFFFFFF; //keep only 6 bytes
-                    oeb_set_clock(value);
-                    std::cout << "Setting clock value to sync to " << value << std::endl;
-                    error_code = 0;
-                    break;
-                case KEY_PYC_SAVE_OFF: //Turn OFF saving of pitch-yaw images
-                    CAMERAS[0].WantToSave = false;
-                    std::cout << "Turning OFF saving of pitch-yaw images\n";
-                    error_code = 0;
-                    break;
-                case KEY_PYC_SAVE_ON: //Turn ON saving of pitch-yaw images
-                    CAMERAS[0].WantToSave = true;
-                    std::cout << "Turning ON saving of pitch-yaw images\n";
-                    error_code = 0;
-                    break;
-                case KEY_RC_SAVE_OFF: //Turn OFF saving of roll images
-                    CAMERAS[1].WantToSave = false;
-                    std::cout << "Turning OFF saving of roll images\n";
-                    error_code = 0;
-                    break;
-                case KEY_RC_SAVE_ON: //Turn ON saving of roll images
-                    CAMERAS[1].WantToSave = true;
-                    std::cout << "Turning ON saving of roll images\n";
-                    error_code = 0;
-                    break;
-                case KEY_DECIMATE_OFF: //Turn OFF image decimation
-                    if(MODE_DECIMATE) {
-                        std::cout << "Turning OFF image decimation\n";
-                        MODE_DECIMATE = false;
-                        error_code = 0;
-                    } else {
-                        error_code = ACK_NOACTION;
-                    }
-                    break;
-                case KEY_DECIMATE_ON: //Turn ON image decimation
-                    if(!MODE_DECIMATE) {
-                        std::cout << "Turning ON image decimation\n";
-                        MODE_DECIMATE = true;
-                        error_code = 0;
-                    } else {
-                        error_code = ACK_NOACTION;
-                    }
-                    break;
-                case KEY_TM_SEND_SETTINGS: //Request settings telemetry packet
-                    queue_settings_tmpacket();
-                    std::cout << "Sending settings telemetry packet\n";
-                    error_code = 0;
-                    break;
-                case KEY_TM_CADENCE_HK: //Set cadence of housekeeping packet
-                    value &= 0xFF;
-                    if(value > 0) {
-                        if(set_if_different(current_settings.cadence_housekeeping, (uint8_t)value)) {
-                            std::cout << "Setting cadence of housekeeping packet to "
-                                      << (int)current_settings.cadence_housekeeping << " s\n";
-                            save_settings();
-                            error_code = 0;
-                        } else {
-                            error_code = ACK_NOACTION;
-                        }
                     } else {
                         error_code = ACK_BADVALUE;
                     }
-                    break;
-                case KEY_TM_CADENCE_A2D: //Set cadence of A2D temperatures packet
-                    value &= 0xFF;
-                    if(value > 0) {
-                        if(set_if_different(current_settings.cadence_a2d, (uint8_t)value)) {
-                            std::cout << "Setting cadence of A2D temperatures packet to "
-                                      << (int)current_settings.cadence_a2d << " s\n";
-                            save_settings();
-                            error_code = 0;
-                        } else {
-                            error_code = ACK_NOACTION;
-                        }
-                    } else {
-                        error_code = ACK_BADVALUE;
-                    }
-                    break;
-                case KEY_TM_CADENCE_SCIENCE: //Set cadence of science packet
-                    value &= 0xFF;
-                    if(value > 0) {
-                        if(set_if_different(current_settings.cadence_science, (uint8_t)value)) {
-                            std::cout << "Setting cadence of science packet to "
-                                      << (int)current_settings.cadence_science << " s\n";
-                            save_settings();
-                            error_code = 0;
-                        } else {
-                            error_code = ACK_NOACTION;
-                        }
-                    } else {
-                        error_code = ACK_BADVALUE;
-                    }
-                    break;
-                case KEY_LOAD_PARAMETERS: //Load parameter table
-                    value &= 0xFF;
-                    if(value != current_table) {
-                        std::cout << "Loading table " << (int)value << std::endl;
-                        if(load_settings(value) == 0) {
-                            queue_settings_tmpacket();
-                            synchronize_settings();
-                            error_code = arm_timer();
-                        } else {
-                            error_code = ACK_BADVALUE;
-                        }
-                    } else {
-                        error_code = ACK_NOACTION;
-                    }
-                    //note that settings are not saved at this point to enable an undo
                     break;
                 default:
                     error_code = ACK_BADCOM; //unknown command
                     response = my_data->command_key;
             } //switch for command key
             break;
-        case SYS_ID_PYC:
+        case SYS_ID_BGO:
             switch(my_data->command_key & 0xF)
             {
-                case KEY_CAMERA_FPS: //Set FPS
-                    value &= 0xFF;
-                    if(value > 0 && value <= 10) {
-                        if(set_if_different(current_settings.PY_rate, (uint8_t)value)) {
-                            synchronize_settings();
-                            std::cout << "Setting pitch-yaw camera rate to "
-                                      << (int)current_settings.PY_rate << " Hz\n";
-                            error_code = arm_timer();
-                            if(error_code == 0) save_settings();
-                        } else {
-                            error_code = ACK_NOACTION;
-                        }
-                    } else {
-                        error_code = ACK_BADVALUE;
-                    }
-                    break;
-                case KEY_CAMERA_GAIN: //Set gain
-                    value &= 0xFF;
-                    if(set_if_different(current_settings.PY_gain, (uint8_t)value)) {
-                        synchronize_settings();
-                        std::cout << "Setting pitch-yaw camera gain to "
-                                  << (int)current_settings.PY_gain << " dB\n";
-                        save_settings();
-                        error_code = 0;
-                    } else {
-                        error_code = ACK_NOACTION;
-                    }
-                    break;
-                case KEY_CAMERA_EXPOSURE: //Set exposure
-                    value &= 0xFFFF;
-                    if(set_if_different(current_settings.PY_exposure, (uint16_t)value)) {
-                        synchronize_settings();
-                        std::cout << "Setting pitch-yaw camera exposure to "
-                                  << (int)current_settings.PY_exposure << " us\n";
-                        save_settings();
-                        error_code = 0;
-                    } else {
-                        error_code = ACK_NOACTION;
-                    }
-                    break;
-                case KEY_CAMERA_SEND_LAST: //Send latest image
-                    TRANSMIT_NEXT_PY_IMAGE = true;
-                    std::cout << "Sending latest pitch-yaw image\n";
-                    error_code = 0;
-                    break;
-                case KEY_CAMERA_SEND_SPECIFIC: //Send specific image
-                    break;
                 default:
                     error_code = ACK_BADCOM; //unknown command
                     response = my_data->command_key;
             } //switch for command key
-            if(error_code == 0) queue_settings_tmpacket();
             break;
-        case SYS_ID_RC:
+        case SYS_ID_IMG:
             switch(my_data->command_key & 0xF)
             {
-                case KEY_CAMERA_FPS: //Set FPS
-                    value &= 0xFF;
-                    if(value > 0 && value <= 10) {
-                        current_settings.R_rate = value;
-                        synchronize_settings();
-                        std::cout << "Setting roll camera rate to "
-                                  << (int)current_settings.R_rate << " Hz\n";
-                        error_code = arm_timer();
-                        if(error_code == 0) save_settings();
-                    } else {
-                        error_code = ACK_BADVALUE;
-                    }
-                    break;
-                case KEY_CAMERA_GAIN: //Set gain
-                    value &= 0xFF;
-                    if(set_if_different(current_settings.R_gain, (uint8_t)value)) {
-                        synchronize_settings();
-                        std::cout << "Setting roll camera gain to "
-                                  << (int)current_settings.R_gain << " dB\n";
-                        save_settings();
-                        error_code = 0;
-                    } else {
-                        error_code = ACK_NOACTION;
-                    }
-                    break;
-                case KEY_CAMERA_EXPOSURE: //Set exposure
-                    value &= 0xFFFF;
-                    if(set_if_different(current_settings.R_exposure, (uint16_t)value)) {
-                        synchronize_settings();
-                        std::cout << "Setting roll camera exposure to "
-                                  << (int)current_settings.R_exposure << " us\n";
-                        save_settings();
-                        error_code = 0;
-                    } else {
-                        error_code = ACK_NOACTION;
-                    }
-                    break;
-                case KEY_CAMERA_SEND_LAST: //Send latest image
-                    TRANSMIT_NEXT_R_IMAGE = true;
-                    std::cout << "Sending latest roll image\n";
-                    error_code = 0;
-                    break;
-                case KEY_CAMERA_SEND_SPECIFIC: //Send specific image
-                    break;
                 default:
                     error_code = ACK_BADCOM; //unknown command
                     response = my_data->command_key;
             } //switch for command key
-            if(error_code == 0) queue_settings_tmpacket();
+            break;
+        case SYS_ID_NAI:
+            switch(my_data->command_key & 0xF)
+            {
+                default:
+                    error_code = ACK_BADCOM; //unknown command
+                    response = my_data->command_key;
+            } //switch for command key
             break;
         default:
             error_code = ACK_BADSYS; //unknown system ID
@@ -920,7 +745,6 @@ void *CommandHandlerThread(void *threadargs)
     started[tid] = false;
     pthread_exit(NULL);
 }
-*/
 
 void *SerialListenerThread(void *threadargs)
 {
@@ -1132,7 +956,6 @@ void start_thread(void *(*routine) (void *), const Thread_data *tdata)
     return;
 }
 
-/*
 void cmd_process_command(CommandPacket &cp)
 {
     std::cout << cp << std::endl;
@@ -1174,7 +997,6 @@ void cmd_process_command(CommandPacket &cp)
     } //switch
     queue_cmd_proc_ack_tmpacket(0, 0);
 }
-*/
 
 void start_all_workers()
 {
@@ -1267,7 +1089,7 @@ int main(int argc, char *argv[])
     }
 
     // start the listen for commands thread right away
-    //start_thread(CommandListenerThread, NULL);
+    start_thread(CommandListenerThread, NULL);
     start_all_workers();
 
     while(g_running){
@@ -1284,7 +1106,7 @@ int main(int argc, char *argv[])
 
             printLogTimestamp();
             printf("Received system ID/command key 0x%02X/0x%02X\n", latest_system_id, latest_command_key);
-            //cmd_process_command(cp);
+            cmd_process_command(cp);
         }
     }
 

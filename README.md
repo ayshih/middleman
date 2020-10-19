@@ -11,6 +11,7 @@ The network code re-uses the GRIPS network code: https://github.com/GRIPS/networ
 * `checker`: Checks the stream of serial packets from `simulator`. 
 * `log_telemetry`: Saves all received telemetry packets.
   Be aware that the `network` submodule also contains useful utilities (`listen_telemetry`, `fake_telemetry`, etc.).
+* `quick`: A simple commander for testing locally
 
 ## Installation
 The main program runs as a service.
