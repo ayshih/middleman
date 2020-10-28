@@ -4,6 +4,7 @@ main
 checker
 simulator
 listen_pps
+route_telemetry
 log_telemetry
 quick
 

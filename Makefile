@@ -1,6 +1,6 @@
 
 CC = g++
-EXEC = simulator checker main listen_pps log_telemetry quick
+EXEC = simulator checker main listen_pps route_telemetry log_telemetry quick
 
 CXXFLAGS = -Inetwork -Wall -pthread
 
@@ -22,6 +22,10 @@ main: main.o ring.o serial.o
 
 listen_pps: listen_pps.c serial.o
 	$(CC) -o $@ $^
+
+route_telemetry: route_telemetry.o
+	make -C network all
+	$(CC) -o $@ $^ network/*.o -pthread
 
 log_telemetry: log_telemetry.o
 	make -C network all
