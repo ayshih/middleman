@@ -1,7 +1,7 @@
 #define MAX_THREADS 50
 #define LOG_PACKETS true
 
-#define LOG_LOCATION "."
+#define LOG_LOCATION "/home/ayshih/middleman/logs"
 
 //Sleep settings (microseconds)
 #define USLEEP_KILL            3000000 // how long to wait before terminating threads
