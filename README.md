@@ -10,6 +10,7 @@ The network code re-uses the GRIPS network code: https://github.com/GRIPS/networ
 * `listen_pps`: Listens on the CTS serial pin of the user-specified device for the PPS signal.
 * `checker`: Checks the stream of serial packets from `simulator`. 
 * `route_telemetry`: Tells the Interface Computer (specified by IP) the IP of the flight computer.
+* `inspect`: Inspect the contents of a telemetry log file, and write out extracted/filtered data.
 * `log_telemetry`: Saves all received telemetry packets.
   Be aware that the `network` submodule also contains useful utilities (`listen_telemetry`, `fake_telemetry`, etc.).
 * `quick`: A simple commander for testing locally

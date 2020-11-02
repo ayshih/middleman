@@ -5,6 +5,7 @@ checker
 simulator
 listen_pps
 route_telemetry
+inspect
 log_telemetry
 quick
 
