@@ -229,8 +229,9 @@ uint64_t current_monotonic_time()
 }
 
 
-uint8_t serial_packet_type(const char *ptr)
+uint8_t serial_packet_type(const char *char_ptr)
 {
+    uint8_t *ptr = (uint8_t *)char_ptr;  // change the type to support bit shifting
     return ((ptr[0] & 0b11) << 1) + (ptr[1] >> 7);
 }
 
