@@ -3,6 +3,8 @@
 
 #define LOG_LOCATION "/home/ayshih/middleman/logs"
 
+#define GPS_DEVICE 0 // 0 == /dev/ttyS0
+
 //Sleep settings (microseconds)
 #define USLEEP_KILL            3000000 // how long to wait before terminating threads
 #define USLEEP_TM_SEND            1000 // period for popping off the telemetry queue
@@ -29,6 +31,7 @@
 
 //BOOMS system ID
 #define SYS_ID_FC  0x00
+#define SYS_ID_GPS 0x60
 #define SYS_ID_MM  0xA0
 #define SYS_ID_BGO 0xB0
 #define SYS_ID_IMG 0xC0
@@ -38,6 +41,8 @@
 #define TM_ACK          0x01
 #define TM_HOUSEKEEPING 0x02
 #define TM_IMG_STATS    0x0C
+#define TM_GPS_POSITION 0x61
+#define TM_GPS_VELOCITY 0x62
 
 #define TM_EVENTGROUP   0xC0
 
@@ -133,7 +138,8 @@ void queue_cmd_proc_ack_tmpacket( uint8_t error_code, uint64_t response );
 //void queue_settings_tmpacket();
 
 void *SerialListenerThread(void *threadargs);
-void *SerialParserThread(void *threadargs);
+void *ImagerParserThread(void *threadargs);
+void *GPSParserThread(void *threadargs);
 
 void *InternalPPSThread(void *threadargs);
 
@@ -404,7 +410,7 @@ void *TelemetryHousekeepingThread(void *threadargs)
         }
         tm_packet_queue << tp;
 
-	/*
+        /*
         TelemetryPacket tp(SYS_ID_ASP, TM_HOUSEKEEPING, tm_frame_sequence_number, oeb_get_clock());
 
         uint8_t status_bitfield = 0;
@@ -751,7 +757,20 @@ void *SerialListenerThread(void *threadargs)
 {
     Thread_data *my_data = (Thread_data *) threadargs;
     int tid = my_data->thread_id;
-    uint8_t device_id = system_id_to_device_id(my_data->system_id);
+
+    uint8_t device_id;
+    switch(my_data->system_id & 0xF0) {
+        case 0x60:
+            device_id = GPS_DEVICE;
+            break;
+        case 0xC0:
+            device_id = system_id_to_device_id(my_data->system_id);
+            break;
+        default:
+            std::cerr << "Unknown system ID for serial listening\n";
+            started[tid] = false;
+            pthread_exit(NULL);
+    }
 
     printf("SerialListener thread #%d [system 0x%02X]\n", tid, my_data->system_id);
 
@@ -777,7 +796,7 @@ void *SerialListenerThread(void *threadargs)
             }
             ring_buffer[device_id].append(read_buffer, c);
 
-            imager_bytes[my_data->system_id & 0x07] += c;
+            if (my_data->system_id != SYS_ID_GPS) imager_bytes[my_data->system_id & 0x07] += c;
         }
     }
 
@@ -787,13 +806,13 @@ void *SerialListenerThread(void *threadargs)
 }
 
 
-void *SerialParserThread(void *threadargs)
+void *ImagerParserThread(void *threadargs)
 {
     Thread_data *my_data = (Thread_data *) threadargs;
     int tid = my_data->thread_id;
     uint8_t device_id = system_id_to_device_id(my_data->system_id);
 
-    printf("SerialParser thread #%d [system 0x%02X]\n", tid, my_data->system_id);
+    printf("ImagerParser thread #%d [system 0x%02X]\n", tid, my_data->system_id);
 
     char packet_buffer[1024];
 
@@ -814,7 +833,7 @@ void *SerialParserThread(void *threadargs)
 
             if(MODE_VERBOSE) {
                 printLogTimestamp();
-                printf("Parsed a serial packet of %d bytes from device %d\n", packet_size, device_id);
+                printf("Parsed an imager packet of %d bytes from device %d\n", packet_size, device_id);
             }
 
             uint8_t packet_type = serial_packet_type(packet_buffer);
@@ -845,7 +864,7 @@ void *SerialParserThread(void *threadargs)
                 tp_hk.append_bytes(packet_buffer, packet_size);
                 tm_packet_queue << tp_hk;
             } else {
-                fprintf(stderr, "Unknown serial packet of type 0b%d%d%d\n", packet_type & 0b100 >> 2, packet_type & 0b010 >> 1, packet_type & 0b001);
+                fprintf(stderr, "Unknown imager packet of type 0b%d%d%d\n", packet_type & 0b100 >> 2, packet_type & 0b010 >> 1, packet_type & 0b001);
                 imager_bad_bytes[my_data->system_id & 0b111] += packet_size;
             }
         }
@@ -862,7 +881,101 @@ void *SerialParserThread(void *threadargs)
         usleep_force(USLEEP_SERIAL_PARSER);
     }
 
-    printf("SerialParser thread #%d [device %d] exiting\n", tid, device_id);
+    printf("ImagerParser thread #%d [device %d] exiting\n", tid, device_id);
+    started[tid] = false;
+    pthread_exit( NULL );
+}
+
+
+void *GPSParserThread(void *threadargs)
+{
+    Thread_data *my_data = (Thread_data *) threadargs;
+    int tid = my_data->thread_id;
+
+    printf("GPSParser thread #%d\n", tid);
+
+    char packet_buffer[1024];
+
+    while(!stop_message[tid])
+    {
+        int packet_size;
+        while((packet_size = ring_buffer[GPS_DEVICE].smart_pop_nmea(packet_buffer)) != 0) {
+            if(packet_size == -1) {
+                fprintf(stderr, "Skipping a byte on device %d\n", GPS_DEVICE);
+                continue;
+            }
+
+            if(MODE_VERBOSE) {
+                printLogTimestamp();
+                printf("Parsed a GPS packet of %d bytes from device %d\n", packet_size, GPS_DEVICE);
+            }
+
+            if (strncmp(packet_buffer, "$GPGGA", 6) == 0) {
+                // GPS position packet
+                char hh[3], mm[3], ss[3], fss[3], lat_c[11], lat_ns, lon_c[12], lon_ew;
+                char quality_c, num_sat_c[3], hdop_c[10], alt_c[10], geoidal_c[10];
+                sscanf(packet_buffer, "$GPGGA,%2s%2s%2s.%2s,%10s,%c,%11s,%c,%c,%2s,%9s[^,],%9s[^,],M,%9s[^,],M",
+                       hh, mm, ss, fss, lat_c, &lat_ns, lon_c, &lon_ew,
+                       &quality_c, num_sat_c, hdop_c, alt_c, geoidal_c);
+
+                TelemetryPacket tp_gps_pos(SYS_ID_GPS, TM_GPS_POSITION, 0, current_monotonic_time());  // TODO: needs counter
+
+                uint8_t hour = atoi(hh), minute = atoi(mm), second = atoi(ss), frac_second = atoi(fss);
+                tp_gps_pos << hour << minute << second << frac_second;
+
+                std::string lat_s(lat_c);
+                double latitude = std::stoi(lat_s.substr(0, 2)) +
+                                  std::stod(lat_s.substr(2, 8)) / 60;
+                if (lat_ns == 'S') latitude *= -1;
+                tp_gps_pos << latitude;
+
+                std::string lon_s(lon_c);
+                double longitude = std::stoi(lon_s.substr(0, 3)) +
+                                   std::stod(lon_s.substr(3, 8)) / 60;
+                if (lon_ew == 'W') longitude *= -1;
+                tp_gps_pos << longitude;
+
+                uint8_t quality = quality_c - '0';
+                tp_gps_pos << quality;
+
+                uint8_t num_sat = atoi(num_sat_c);
+                tp_gps_pos << num_sat;
+
+                float hdop = atof(hdop_c);
+                tp_gps_pos << hdop;
+
+                uint16_t altitude = atoi(alt_c);
+                tp_gps_pos << altitude;
+
+                int16_t geoidal = atoi(geoidal_c);
+                tp_gps_pos << geoidal;
+
+                tm_packet_queue << tp_gps_pos;
+            } else if (strncmp(packet_buffer, "$GPVTG", 6) == 0) {
+                // GPS velocity packet
+                char tmg_true_c[10], tmg_mag_c[10], sog_knots_c[10], sog_kph_c[10], mode_c;
+                sscanf(packet_buffer, "$GPVTG,%9[^,],T,%9[^,],M,%9[^,],N,%9[^,],K,%c",
+                       tmg_true_c, tmg_mag_c, sog_knots_c, sog_kph_c, &mode_c);
+
+                TelemetryPacket tp_gps_vel(SYS_ID_GPS, TM_GPS_VELOCITY, 0, current_monotonic_time());  // TODO: needs counter
+
+                float tmg_true = atof(tmg_true_c), tmg_mag = atof(tmg_mag_c), sog_kph = atof(sog_kph_c);
+                tp_gps_vel << tmg_true << tmg_mag << sog_kph;
+
+                uint8_t mode = mode_c, padding = 0;
+                tp_gps_vel << mode << padding;
+
+                tm_packet_queue << tp_gps_vel;
+            } else {
+                packet_buffer[packet_size] = 0;
+                fprintf(stderr, "Unhandled GPS packet: %s", packet_buffer);
+            }
+        }
+
+        usleep_force(USLEEP_SERIAL_PARSER);
+    }
+
+    printf("GPSParser thread #%d exiting\n", tid);
     started[tid] = false;
     pthread_exit( NULL );
 }
@@ -1012,8 +1125,12 @@ void start_all_workers()
     for(int i = 0; i < 8; i++) {
         tdata.system_id = SYS_ID_IMG + i;
         start_thread(SerialListenerThread, &tdata); 
-        start_thread(SerialParserThread, &tdata);
+        start_thread(ImagerParserThread, &tdata);
     }
+
+    tdata.system_id = SYS_ID_GPS;
+    start_thread(SerialListenerThread, &tdata);
+    start_thread(GPSParserThread, NULL);
 
     start_thread(InternalPPSThread, NULL);
 }

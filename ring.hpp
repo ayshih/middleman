@@ -17,9 +17,11 @@ class RingBuffer {
 
         void append(const void *ptr, uint16_t num);
         int32_t pop(void *ptr, uint16_t num);
+        int32_t peek(void *ptr, uint16_t num);
         uint32_t size();
 
 	int32_t smart_pop(void *ptr);
+	int32_t smart_pop_nmea(void *ptr);
 
         void clear();
 };
