@@ -2,12 +2,13 @@
 CC = g++
 EXEC = simulator checker main listen_pps route_telemetry turn_off inspect log_telemetry quick
 
-CXXFLAGS = -Inetwork -Wall -pthread
+CXXFLAGS = -Inetwork -IaDIO -Wall -pthread
 
 all: $(EXEC)
 
 clean:
 	make -C network clean
+	make -C aDIO clean
 	rm *.o $(EXEC)
 
 simulator: simulator.c serial.o
@@ -18,7 +19,8 @@ checker: checker.cpp serial.o ring.o
 
 main: main.o ring.o serial.o
 	make -C network all
-	$(CC) -o $@ $^ network/*.o -pthread
+	make -C aDIO all
+	$(CC) -o $@ $^ network/*.o -pthread -LaDIO -lrtd-aDIO
 
 listen_pps: listen_pps.c serial.o
 	$(CC) -o $@ $^

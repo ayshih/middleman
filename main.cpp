@@ -1,4 +1,5 @@
 #define MAX_THREADS 50
+
 #define LOG_PACKETS true
 
 #define LOG_LOCATION "/home/ayshih/middleman/logs"
@@ -11,6 +12,7 @@
 #define USLEEP_UDP_LISTEN         1000 // safety measure in case UDP listening is changed to non-blocking
 #define USLEEP_MAIN               5000 // period for checking for new commands in the queue
 #define USLEEP_SERIAL_PARSER     10000 // wait time for polling a ring buffer
+#define USLEEP_ADIO              10000 // wait time for aDIO operations
 
 //IP addresses
 #define IP_FC "192.168.2.100"
@@ -41,6 +43,7 @@
 #define TM_ACK          0x01
 #define TM_HOUSEKEEPING 0x02
 #define TM_IMG_STATS    0x0C
+#define TM_GPS_PPS      0x60
 #define TM_GPS_POSITION 0x61
 #define TM_GPS_VELOCITY 0x62
 
@@ -71,6 +74,7 @@
 #include <sys/io.h>  // iopl()
 #include <poll.h>
 #include <sys/ioctl.h>
+#include <error.h> // error()
 
 #include "UDPSender.hpp"
 #include "UDPReceiver.hpp"
@@ -78,6 +82,8 @@
 #include "Telemetry.hpp"
 #include "ring.hpp"
 #include "serial.h"
+
+#include <aDIO_library.h>
 
 //#include "main.hpp"
 
@@ -93,6 +99,7 @@ bool MODE_NETWORK = false;
 bool MODE_TIMING = false;
 bool MODE_VERBOSE = false;
 bool MODE_SIMULATED_DATA = false;
+bool MODE_FAKE_PPS = false;
 
 // interthread signals
 bool SIGNAL_RESET_TELEMETRYSENDER = false;
@@ -141,7 +148,10 @@ void *SerialListenerThread(void *threadargs);
 void *ImagerParserThread(void *threadargs);
 void *GPSParserThread(void *threadargs);
 
+void pps_tick();
 void *InternalPPSThread(void *threadargs);
+void pps_handler(isr_info_t info);
+void *ExternalPPSThread(void *threadargs);
 
 void writeCurrentUT(char *buffer);
 void printLogTimestamp();
@@ -1039,6 +1049,94 @@ void *InternalPPSThread(void *threadargs)
 }
 
 
+void pps_handler(isr_info_t info)
+{
+    // TODO: check contents of info
+
+    pps_tick();
+
+    TelemetryPacket tp_gps_pps(SYS_ID_GPS, TM_GPS_PPS, 0, current_monotonic_time());  // TODO: needs counter
+
+    struct timespec now;
+    struct tm now_tm;
+
+    clock_gettime(CLOCK_REALTIME, &now);
+    gmtime_r(&now.tv_sec, &now_tm);
+
+    uint8_t hour = now_tm.tm_hour, minute = now_tm.tm_min;
+    double second = now_tm.tm_sec + now.tv_nsec / 1e9;
+    tp_gps_pps << hour << minute << second;
+
+    tm_packet_queue << tp_gps_pps;
+}
+
+
+void *ExternalPPSThread(void *threadargs)
+{
+    Thread_data *my_data = (Thread_data *) threadargs;
+    int tid = my_data->thread_id;
+
+    printf("ExternalPPS thread #%d\n", tid);
+
+    DeviceHandle aDIO_Device;
+    int aDIO_ReturnVal;
+    uint8_t IntMode;
+
+    // Open aDIO device
+    aDIO_ReturnVal = OpenDIO_aDIO(&aDIO_Device, 0);
+    if (aDIO_ReturnVal) {
+        error(EXIT_FAILURE, errno, "ERROR:  OpenDIO_aDIO(0) FAILED:");
+    }
+    usleep_force(USLEEP_ADIO);
+
+    // Install handler for PPS interrupts
+    aDIO_ReturnVal = InstallISR_aDIO(aDIO_Device, pps_handler, SCHED_FIFO, 99);
+    if (aDIO_ReturnVal) {
+        error(EXIT_FAILURE, errno, "ERROR:  InstallISR_aDIO() FAILED");
+    }
+
+    // Enable strobe mode
+    aDIO_ReturnVal = EnableInterrupts_aDIO(aDIO_Device, STROBE_INT_MODE);
+
+    usleep_force(USLEEP_ADIO);
+
+    if (aDIO_ReturnVal) {
+        RemoveISR_aDIO(aDIO_Device);
+        error(EXIT_FAILURE, errno, "ERROR:  EnableInterrupts_aDIO() FAILED");
+    }
+
+    // Check for strobe mode
+    GetInterruptMode_aDIO(aDIO_Device, &IntMode);
+    if (IntMode != STROBE_INT_MODE) {
+        RemoveISR_aDIO(aDIO_Device);
+        error(EXIT_FAILURE, errno, "ERROR:  GetInterruptMode_aDIO() FAILED");
+    }
+
+    while(!stop_message[tid])
+    {
+        usleep_force(USLEEP_ADIO);
+    }
+
+    // Disable interrupts
+    EnableInterrupts_aDIO(aDIO_Device, DISABLE_INT_MODE);
+
+    usleep_force(USLEEP_ADIO);
+
+    // Remove handler for PPS interrupts
+    RemoveISR_aDIO(aDIO_Device);
+
+    // Close the aDIO device
+    aDIO_ReturnVal = CloseDIO_aDIO(aDIO_Device);
+    if (aDIO_ReturnVal) {
+        printf("Error while closing ADIO = %d\n", aDIO_ReturnVal);
+    }
+
+    printf("ExternalPPS thread #%d exiting\n", tid);
+    started[tid] = false;
+    pthread_exit( NULL );
+}
+
+
 void start_thread(void *(*routine) (void *), const Thread_data *tdata)
 {
     pthread_mutex_lock(&mutexStartThread);
@@ -1132,7 +1230,11 @@ void start_all_workers()
     start_thread(SerialListenerThread, &tdata);
     start_thread(GPSParserThread, NULL);
 
-    start_thread(InternalPPSThread, NULL);
+    if (MODE_FAKE_PPS) {
+        start_thread(InternalPPSThread, NULL);
+    } else {
+        start_thread(ExternalPPSThread, NULL);
+    }
 }
 
 int main(int argc, char *argv[])
@@ -1143,6 +1245,10 @@ int main(int argc, char *argv[])
         if(argv[i][0] == '-') {
             for(int j = 1; argv[i][j] != 0; j++) {
                 switch(argv[i][j]) {
+                    case 'f':
+                        std::cout << "Fake PPS mode\n";
+                        MODE_FAKE_PPS = true;
+                        break;
                     case 'i':
                         strncpy(ip_tm, &argv[i][j+1], 20);
                         ip_tm[19] = 0;
@@ -1166,6 +1272,7 @@ int main(int argc, char *argv[])
                         break;
                     case '?':
                         std::cout << "Command-line options:\n";
+                        std::cout << "-f      Fake PPS mode (internal rather than GPS)\n";
                         std::cout << "-i<ip>  Send telemetry packets to this IP (instead of the FC's IP)\n";
                         std::cout << "-n      Display network packets (can be crazy!)\n";
                         std::cout << "-s      Verify simulated data in the detector packets\n";
