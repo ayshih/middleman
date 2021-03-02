@@ -62,7 +62,7 @@ int32_t RingBuffer::smart_pop(void *ptr)
     // local copy since there may be active writing
     uint32_t this_write_index = this->write_index;
 
-    uint32_t this_size = (this_write_index - this->read_index) % BUFFER_SIZE;
+    uint32_t this_size = (BUFFER_SIZE + this_write_index - this->read_index) % BUFFER_SIZE;
 
     if(this_size == 0) return 0;
 
@@ -90,7 +90,7 @@ int32_t RingBuffer::smart_pop_nmea(void *ptr)
     // local copy since there may be active writing
     uint32_t this_write_index = this->write_index;
 
-    uint32_t this_size = (this_write_index - this->read_index) % BUFFER_SIZE;
+    uint32_t this_size = (BUFFER_SIZE + this_write_index - this->read_index) % BUFFER_SIZE;
 
     if(this_size == 0) return 0;
 
