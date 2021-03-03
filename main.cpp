@@ -148,6 +148,15 @@ void *SerialListenerThread(void *threadargs);
 void *ImagerParserThread(void *threadargs);
 void *GPSParserThread(void *threadargs);
 
+struct gps_for_pps_struct{
+    uint8_t hour = 255;
+    uint8_t minute;
+    uint8_t second;
+    uint32_t second_offset;
+    uint8_t day_offset = 0;
+};
+struct gps_for_pps_struct gps_for_pps;
+
 void pps_tick();
 void *InternalPPSThread(void *threadargs);
 void pps_handler(isr_info_t info);
@@ -961,6 +970,16 @@ void *GPSParserThread(void *threadargs)
                 tp_gps_pos << geoidal;
 
                 tm_packet_queue << tp_gps_pos;
+
+                if (frac_second == 0) {
+                    if (hour == 0 && gps_for_pps.hour == 23) {  // day rollover
+                        gps_for_pps.day_offset++;
+                    }
+                    gps_for_pps.hour = hour;
+                    gps_for_pps.minute = minute;
+                    gps_for_pps.second = second;
+                    gps_for_pps.second_offset = 1;
+                }
             } else if (strncmp(packet_buffer, "$GPVTG", 6) == 0) {
                 // GPS velocity packet
                 char tmg_true_c[10], tmg_mag_c[10], sog_knots_c[10], sog_kph_c[10], mode_c;
@@ -1057,17 +1076,35 @@ void pps_handler(isr_info_t info)
 
     TelemetryPacket tp_gps_pps(SYS_ID_GPS, TM_GPS_PPS, 0, current_monotonic_time());  // TODO: needs counter
 
-    struct timespec now;
-    struct tm now_tm;
+    if (gps_for_pps.hour != 255) {  // we've received at least one GPS position packet
+        struct timespec now;
+        struct tm now_tm, pps_tm;
 
-    clock_gettime(CLOCK_REALTIME, &now);
-    gmtime_r(&now.tv_sec, &now_tm);
+        clock_gettime(CLOCK_REALTIME, &now);
+        gmtime_r(&now.tv_sec, &now_tm);
+        time_t false_sbc_time = mktime(&now_tm);  // false conversion as if the UTC time were local time
 
-    uint8_t hour = now_tm.tm_hour, minute = now_tm.tm_min;
-    double second = now_tm.tm_sec + now.tv_nsec / 1e9;
-    tp_gps_pps << hour << minute << second;
+        // Populate the tm structure with the GPS timestamp
+        memcpy(&pps_tm, &now_tm, sizeof(tm));
+        pps_tm.tm_hour = gps_for_pps.hour;
+        pps_tm.tm_min = gps_for_pps.minute;
+        pps_tm.tm_sec = gps_for_pps.second + gps_for_pps.second_offset;
 
-    tm_packet_queue << tp_gps_pps;
+        // Run it through mktime/localtime_r to do the adding of time
+        time_t false_pps_time = mktime(&pps_tm);  // false conversion as if the UTC time were local time
+        localtime_r(&false_pps_time, &pps_tm);  // false conversion is reversed
+
+        tp_gps_pps << gps_for_pps.day_offset;
+
+        uint8_t hour = pps_tm.tm_hour, minute = pps_tm.tm_min, second=pps_tm.tm_sec;
+        tp_gps_pps << hour << minute << second;
+
+        // False conversions cancel out
+        uint32_t clock_difference = (false_sbc_time - false_pps_time) * 1e6 + now.tv_nsec / 1e3;
+        tp_gps_pps << clock_difference;
+
+        tm_packet_queue << tp_gps_pps;
+    }
 }
 
 
