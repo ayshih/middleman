@@ -906,6 +906,16 @@ void *ImagerParserThread(void *threadargs)
 }
 
 
+bool verify_nmea_checksum(char *buf, int buf_size)
+{
+    uint8_t xor_checksum = buf[1];
+    for (int i=2; i<buf_size-5; i++) xor_checksum ^= buf[i];
+    char xor_checksum_in_hex[3];
+    sprintf(xor_checksum_in_hex, "%02X", xor_checksum);
+    return strncmp(xor_checksum_in_hex, &buf[buf_size-4], 2) == 0;
+}
+
+
 void *GPSParserThread(void *threadargs)
 {
     Thread_data *my_data = (Thread_data *) threadargs;
@@ -929,11 +939,19 @@ void *GPSParserThread(void *threadargs)
                 printf("Parsed a GPS packet of %d bytes from device %d\n", packet_size, GPS_DEVICE);
             }
 
+            // Check the NMEA checksum
+            if (packet_buffer[0] != '$' || packet_buffer[packet_size-5] != '*' ||
+                !verify_nmea_checksum(packet_buffer, packet_size)) {
+                packet_buffer[packet_size] = 0;
+                std::cerr << "Invalid NMEA checksum for packet: " << packet_buffer << std::endl;
+                continue;
+            }
+
             if (strncmp(packet_buffer, "$GPGGA", 6) == 0) {
                 // GPS position packet
                 char hh[3], mm[3], ss[3], fss[3], lat_c[11], lat_ns, lon_c[12], lon_ew;
                 char quality_c, num_sat_c[3], hdop_c[10], alt_c[10], geoidal_c[10];
-                sscanf(packet_buffer, "$GPGGA,%2s%2s%2s.%2s,%10s,%c,%11s,%c,%c,%2s,%9s[^,],%9s[^,],M,%9s[^,],M",
+                sscanf(packet_buffer, "$GPGGA,%2s%2s%2s.%2s,%10s,%c,%11s,%c,%c,%2s,%9[^,],%9[^,],M,%9[^,],M",
                        hh, mm, ss, fss, lat_c, &lat_ns, lon_c, &lon_ew,
                        &quality_c, num_sat_c, hdop_c, alt_c, geoidal_c);
 
