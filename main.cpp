@@ -1148,50 +1148,52 @@ void *ExternalPPSThread(void *threadargs)
     // Open aDIO device
     aDIO_ReturnVal = OpenDIO_aDIO(&aDIO_Device, 0);
     if (aDIO_ReturnVal) {
-        error(EXIT_FAILURE, errno, "ERROR:  OpenDIO_aDIO(0) FAILED:");
-    }
-    usleep_force(USLEEP_ADIO);
-
-    // Install handler for PPS interrupts
-    aDIO_ReturnVal = InstallISR_aDIO(aDIO_Device, pps_handler, SCHED_FIFO, 99);
-    if (aDIO_ReturnVal) {
-        error(EXIT_FAILURE, errno, "ERROR:  InstallISR_aDIO() FAILED");
-    }
-
-    // Enable strobe mode
-    aDIO_ReturnVal = EnableInterrupts_aDIO(aDIO_Device, STROBE_INT_MODE);
-
-    usleep_force(USLEEP_ADIO);
-
-    if (aDIO_ReturnVal) {
-        RemoveISR_aDIO(aDIO_Device);
-        error(EXIT_FAILURE, errno, "ERROR:  EnableInterrupts_aDIO() FAILED");
-    }
-
-    // Check for strobe mode
-    GetInterruptMode_aDIO(aDIO_Device, &IntMode);
-    if (IntMode != STROBE_INT_MODE) {
-        RemoveISR_aDIO(aDIO_Device);
-        error(EXIT_FAILURE, errno, "ERROR:  GetInterruptMode_aDIO() FAILED");
-    }
-
-    while(!stop_message[tid])
-    {
+        std::cerr << "ExternalPPS ERROR:  OpenDIO_aDIO(0) FAILED\n";
+    } else {
         usleep_force(USLEEP_ADIO);
-    }
 
-    // Disable interrupts
-    EnableInterrupts_aDIO(aDIO_Device, DISABLE_INT_MODE);
+        // Install handler for PPS interrupts
+        aDIO_ReturnVal = InstallISR_aDIO(aDIO_Device, pps_handler, SCHED_FIFO, 99);
+        if (aDIO_ReturnVal) {
+            std::cerr << "ExternalPPS ERROR:  InstallISR_aDIO() FAILED\n";
+        } else {
+            // Enable strobe mode
+            aDIO_ReturnVal = EnableInterrupts_aDIO(aDIO_Device, STROBE_INT_MODE);
 
-    usleep_force(USLEEP_ADIO);
+            usleep_force(USLEEP_ADIO);
 
-    // Remove handler for PPS interrupts
-    RemoveISR_aDIO(aDIO_Device);
+            if (aDIO_ReturnVal) {
+                RemoveISR_aDIO(aDIO_Device);
+		std::cerr << "ExternalPPS ERROR:  EnableInterrupts_aDIO() FAILED\n";
+            } else {
+                // Check for strobe mode
+                GetInterruptMode_aDIO(aDIO_Device, &IntMode);
 
-    // Close the aDIO device
-    aDIO_ReturnVal = CloseDIO_aDIO(aDIO_Device);
-    if (aDIO_ReturnVal) {
-        printf("Error while closing ADIO = %d\n", aDIO_ReturnVal);
+                if (IntMode != STROBE_INT_MODE) {
+                    RemoveISR_aDIO(aDIO_Device);
+		    std::cerr << "ExternalPPS ERROR:  GetInterruptMode_aDIO() FAILED\n";
+                } else {
+                    while(!stop_message[tid])
+                    {
+                        usleep_force(USLEEP_ADIO);
+                    }
+		}
+
+                // Disable interrupts
+                EnableInterrupts_aDIO(aDIO_Device, DISABLE_INT_MODE);
+
+                usleep_force(USLEEP_ADIO);
+	    }
+
+            // Remove handler for PPS interrupts
+            RemoveISR_aDIO(aDIO_Device);
+	}
+
+        // Close the aDIO device
+        aDIO_ReturnVal = CloseDIO_aDIO(aDIO_Device);
+        if (aDIO_ReturnVal) {
+	    std::cerr << "Error while closing ADIO = " << aDIO_ReturnVal << std::endl;
+        }
     }
 
     printf("ExternalPPS thread #%d exiting\n", tid);
