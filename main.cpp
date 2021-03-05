@@ -1112,16 +1112,24 @@ void pps_handler(isr_info_t info)
         time_t false_pps_time = mktime(&pps_tm);  // false conversion as if the UTC time were local time
         localtime_r(&false_pps_time, &pps_tm);  // false conversion is reversed
 
-        tp_gps_pps << gps_for_pps.day_offset;
+        // Account for the addition of second_offset resulting in day change
+        uint8_t day_offset = gps_for_pps.day_offset + (pps_tm.tm_mday != now_tm.tm_mday);
+        tp_gps_pps << day_offset;
 
         uint8_t hour = pps_tm.tm_hour, minute = pps_tm.tm_min, second=pps_tm.tm_sec;
         tp_gps_pps << hour << minute << second;
 
-        // False conversions cancel out
-        uint32_t clock_difference = (false_sbc_time - false_pps_time) * 1e6 + now.tv_nsec / 1e3;
+        // False conversions cancel out, but the result can be off by a full day
+        int32_t diff_seconds = false_sbc_time - false_pps_time;
+        if (diff_seconds > 43200) diff_seconds -= 86400;
+        if (diff_seconds < -43200) diff_seconds += 86400;
+        uint32_t clock_difference = diff_seconds * 1e6 + now.tv_nsec / 1e3;
         tp_gps_pps << clock_difference;
 
         tm_packet_queue << tp_gps_pps;
+
+        // Protection in case we lose GPS position packets but are still getting PPS
+        gps_for_pps.second_offset++;
     }
 }
 
