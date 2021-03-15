@@ -1164,35 +1164,44 @@ void *ExternalPPSThread(void *threadargs)
 
             if (aDIO_ReturnVal) {
                 RemoveISR_aDIO(aDIO_Device);
-		std::cerr << "ExternalPPS ERROR:  EnableInterrupts_aDIO() FAILED\n";
+                std::cerr << "ExternalPPS ERROR:  EnableInterrupts_aDIO() FAILED\n";
             } else {
                 // Check for strobe mode
                 GetInterruptMode_aDIO(aDIO_Device, &IntMode);
 
                 if (IntMode != STROBE_INT_MODE) {
                     RemoveISR_aDIO(aDIO_Device);
-		    std::cerr << "ExternalPPS ERROR:  GetInterruptMode_aDIO() FAILED\n";
+                    std::cerr << "ExternalPPS ERROR:  GetInterruptMode_aDIO() FAILED\n";
                 } else {
+                    // Set the PPS pulse width to 500 ms
+                    struct pollfd serial_poll;
+                    serial_poll.fd = device_fd[GPS_DEVICE];
+                    serial_poll.events = POLLOUT;
+
+                    char command[32] = "$PTNLSPS,1,5000000,1,0*53\r\n";
+
+                    polled_write(serial_poll.fd, &serial_poll, command, strlen(command));
+
                     while(!stop_message[tid])
                     {
                         usleep_force(USLEEP_ADIO);
                     }
-		}
+                }
 
                 // Disable interrupts
                 EnableInterrupts_aDIO(aDIO_Device, DISABLE_INT_MODE);
 
                 usleep_force(USLEEP_ADIO);
-	    }
+            }
 
             // Remove handler for PPS interrupts
             RemoveISR_aDIO(aDIO_Device);
-	}
+        }
 
         // Close the aDIO device
         aDIO_ReturnVal = CloseDIO_aDIO(aDIO_Device);
         if (aDIO_ReturnVal) {
-	    std::cerr << "Error while closing ADIO = " << aDIO_ReturnVal << std::endl;
+            std::cerr << "Error while closing ADIO = " << aDIO_ReturnVal << std::endl;
         }
     }
 
