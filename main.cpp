@@ -916,6 +916,17 @@ bool verify_nmea_checksum(char *buf, int buf_size)
 }
 
 
+void commastring_to_argv(char *string, char **argv, int max_args)
+{
+    char **substring;
+    for (substring = argv; (*substring = strsep(&string, ",")) != NULL;) {
+        //printf("> %s\n", *substring);
+        if (++substring >= &argv[max_args])
+            break;
+    }
+}
+
+
 void *GPSParserThread(void *threadargs)
 {
     Thread_data *my_data = (Thread_data *) threadargs;
@@ -924,6 +935,7 @@ void *GPSParserThread(void *threadargs)
     printf("GPSParser thread #%d\n", tid);
 
     char packet_buffer[1024];
+    char *argv[30];
 
     while(!stop_message[tid])
     {
@@ -947,49 +959,67 @@ void *GPSParserThread(void *threadargs)
                 continue;
             }
 
+            packet_buffer[packet_size] = 0;
+
             if (strncmp(packet_buffer, "$GPGGA", 6) == 0) {
                 // GPS position packet
-                char hh[3], mm[3], ss[3], fss[3], lat_c[11], lat_ns, lon_c[12], lon_ew;
-                char quality_c, num_sat_c[3], hdop_c[10], alt_c[10], geoidal_c[10];
-                sscanf(packet_buffer, "$GPGGA,%2s%2s%2s.%2s,%10s,%c,%11s,%c,%c,%2s,%9[^,],%9[^,],M,%9[^,],M",
-                       hh, mm, ss, fss, lat_c, &lat_ns, lon_c, &lon_ew,
-                       &quality_c, num_sat_c, hdop_c, alt_c, geoidal_c);
+                commastring_to_argv(packet_buffer, argv, 30);
 
                 TelemetryPacket tp_gps_pos(SYS_ID_GPS, TM_GPS_POSITION, 0, current_monotonic_time());  // TODO: needs counter
 
-                uint8_t hour = atoi(hh), minute = atoi(mm), second = atoi(ss), frac_second = atoi(fss);
+                int8_t hour = -1, minute = -1, second = -1, frac_second = -1;
+                std::string hms_s(argv[1]);
+                if (hms_s.length() > 0) {
+                    hour = std::stoi(hms_s.substr(0, 2));
+                    minute = std::stoi(hms_s.substr(2, 2));
+                    second = std::stoi(hms_s.substr(4, 2));
+                    frac_second = std::stoi(hms_s.substr(7, 2));
+                }
                 tp_gps_pos << hour << minute << second << frac_second;
 
-                std::string lat_s(lat_c);
-                double latitude = std::stoi(lat_s.substr(0, 2)) +
-                                  std::stod(lat_s.substr(2, 8)) / 60;
-                if (lat_ns == 'S') latitude *= -1;
+                double latitude = -1;
+                std::string lat_s(argv[2]), lat_ns_s(argv[3]);
+                if ((lat_s.length() > 0) && (lat_ns_s.length() > 0)) {
+                    latitude = std::stoi(lat_s.substr(0, 2)) +
+                               std::stod(lat_s.substr(2, 8)) / 60;
+                    if (lat_ns_s[0] == 'S') latitude *= -1;
+                }
                 tp_gps_pos << latitude;
 
-                std::string lon_s(lon_c);
-                double longitude = std::stoi(lon_s.substr(0, 3)) +
-                                   std::stod(lon_s.substr(3, 8)) / 60;
-                if (lon_ew == 'W') longitude *= -1;
+                double longitude = -1;
+                std::string lon_s(argv[4]), lon_ew_s(argv[5]);
+                if ((lon_s.length() > 0) && (lon_ew_s.length() > 0)) {
+                    longitude = std::stoi(lon_s.substr(0, 3)) +
+                                std::stod(lon_s.substr(3, 8)) / 60;
+                    if (lon_ew_s[0] == 'W') longitude *= -1;
+                }
                 tp_gps_pos << longitude;
 
-                uint8_t quality = quality_c - '0';
+                uint8_t quality = atoi(argv[6]);
                 tp_gps_pos << quality;
 
-                uint8_t num_sat = atoi(num_sat_c);
+                uint8_t num_sat = atoi(argv[7]);
                 tp_gps_pos << num_sat;
 
-                float hdop = atof(hdop_c);
+                float hdop = -1;
+                if (strlen(argv[8]) > 0) hdop = atof(argv[8]);
                 tp_gps_pos << hdop;
 
-                uint16_t altitude = atoi(alt_c);
+                uint16_t altitude = 65535;
+                if (strlen(argv[9]) > 0) altitude = atoi(argv[9]);
                 tp_gps_pos << altitude;
 
-                int16_t geoidal = atoi(geoidal_c);
+                int16_t geoidal = -32768;
+                if (strlen(argv[11]) > 0) geoidal = atoi(argv[11]);
                 tp_gps_pos << geoidal;
 
                 tm_packet_queue << tp_gps_pos;
 
-                if (frac_second == 0) {
+                if (hour == -1) {
+                    printf("%s", packet_buffer);
+                }
+
+                if ((quality != 0) && (frac_second == 0)) {
                     if (hour == 0 && gps_for_pps.hour == 23) {  // day rollover
                         gps_for_pps.day_offset++;
                     }
@@ -1000,17 +1030,18 @@ void *GPSParserThread(void *threadargs)
                 }
             } else if (strncmp(packet_buffer, "$GPVTG", 6) == 0) {
                 // GPS velocity packet
-                char tmg_true_c[10], tmg_mag_c[10], sog_knots_c[10], sog_kph_c[10], mode_c;
-                sscanf(packet_buffer, "$GPVTG,%9[^,],T,%9[^,],M,%9[^,],N,%9[^,],K,%c",
-                       tmg_true_c, tmg_mag_c, sog_knots_c, sog_kph_c, &mode_c);
+                commastring_to_argv(packet_buffer, argv, 30);
 
                 TelemetryPacket tp_gps_vel(SYS_ID_GPS, TM_GPS_VELOCITY, 0, current_monotonic_time());  // TODO: needs counter
 
-                float tmg_true = atof(tmg_true_c), tmg_mag = atof(tmg_mag_c), sog_kph = atof(sog_kph_c);
+                float tmg_true = -1, tmg_mag = -1, sog_kph = -1;
+                if (strlen(argv[1]) > 0) tmg_true = atof(argv[1]);
+                if (strlen(argv[3]) > 0) tmg_mag = atof(argv[3]);
+                if (strlen(argv[7]) > 0) sog_kph = atof(argv[7]);
                 tp_gps_vel << tmg_true << tmg_mag << sog_kph;
 
-                uint8_t mode = mode_c, padding = 0;
-                tp_gps_vel << mode << padding;
+                uint8_t mode = argv[9][0], reserved = 0;
+                tp_gps_vel << mode << reserved;
 
                 tm_packet_queue << tp_gps_vel;
             } else {
@@ -1125,6 +1156,8 @@ void pps_handler(isr_info_t info)
         if (diff_seconds < -43200) diff_seconds += 86400;
         uint32_t clock_difference = diff_seconds * 1e6 + now.tv_nsec / 1e3;
         tp_gps_pps << clock_difference;
+
+        tp_gps_pps << gps_for_pps.second_offset;
 
         tm_packet_queue << tp_gps_pps;
 
