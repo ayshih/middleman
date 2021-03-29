@@ -205,19 +205,19 @@ void writeCurrentUT(char *buffer)
 {
     time_t now;
     time(&now);
-    struct tm *now_tm;
-    now_tm = gmtime(&now);
-    strftime(buffer, 14, "%y%m%d_%H%M%S", now_tm);
+    struct tm now_tm;
+    gmtime_r(&now, &now_tm);
+    strftime(buffer, 14, "%y%m%d_%H%M%S", &now_tm);
 }
 
 void printLogTimestamp()
 {
     time_t now;
     time(&now);
-    struct tm *now_tm;
-    now_tm = gmtime(&now);
+    struct tm now_tm;
+    gmtime_r(&now, &now_tm);
     char timestamp[23];
-    strftime(timestamp, 23, "%Y-%m-%d %H:%M:%S UT", now_tm);
+    strftime(timestamp, 23, "%Y-%m-%d %H:%M:%S UT", &now_tm);
     printf("[%s] ", timestamp);
 }
 
@@ -934,7 +934,7 @@ void *GPSParserThread(void *threadargs)
 
     printf("GPSParser thread #%d\n", tid);
 
-    char packet_buffer[1024];
+    char packet_buffer[1024], saved_buffer[1024];
     char *argv[30];
 
     while(!stop_message[tid])
@@ -960,6 +960,7 @@ void *GPSParserThread(void *threadargs)
             }
 
             packet_buffer[packet_size] = 0;
+            strncpy(saved_buffer, packet_buffer, packet_size+1);
 
             if (strncmp(packet_buffer, "$GPGGA", 6) == 0) {
                 // GPS position packet
@@ -1016,7 +1017,8 @@ void *GPSParserThread(void *threadargs)
                 tm_packet_queue << tp_gps_pos;
 
                 if (hour == -1) {
-                    printf("%s", packet_buffer);
+                    printLogTimestamp();
+                    printf("GPS packet missing information: %s", saved_buffer);
                 }
 
                 if ((quality != 0) && (frac_second == 0)) {
@@ -1044,9 +1046,15 @@ void *GPSParserThread(void *threadargs)
                 tp_gps_vel << mode << reserved;
 
                 tm_packet_queue << tp_gps_vel;
+
+                if (tmg_true < 0) {
+                    printLogTimestamp();
+                    printf("GPS packet missing information: %s", saved_buffer);
+                }
             } else {
                 packet_buffer[packet_size] = 0;
-                fprintf(stderr, "Unhandled GPS packet: %s", packet_buffer);
+                printLogTimestamp();
+                printf("GPS packet not handled: %s", packet_buffer);
             }
         }
 
@@ -1127,11 +1135,23 @@ void pps_handler(isr_info_t info)
 
     if (gps_for_pps.hour != 255) {  // we've received at least one GPS position packet
         struct timespec now;
-        struct tm now_tm, pps_tm;
+        struct tm now_tm, pps_tm, temp_tm;
 
         clock_gettime(CLOCK_REALTIME, &now);
+
+        // The code below is a bit crazy
+        // We use the mktime/localtime_r loop to take advantage of machinery to add time
+        // We falsely treat all UTC times as local times, and we have to be careful about DST
+        // Since we care about differences, all of this craziness cancels out
+
+        // Record whether Daylight Savings Time (DST) is in effect
+        localtime_r(&now.tv_sec, &now_tm);
+        int isdst = now_tm.tm_isdst;
+
         gmtime_r(&now.tv_sec, &now_tm);
-        time_t false_sbc_time = mktime(&now_tm);  // false conversion as if the UTC time were local time
+        now_tm.tm_isdst = isdst;  // UTC time would normally always not be in DST
+        memcpy(&temp_tm, &now_tm, sizeof(tm));  // make a copy because mktime() can modify its argument
+        time_t false_sbc_time = mktime(&temp_tm);  // false conversion as if the UTC time were local time
 
         // Populate the tm structure with the GPS timestamp
         memcpy(&pps_tm, &now_tm, sizeof(tm));
