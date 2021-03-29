@@ -1,0 +1,224 @@
+Change log for SWP-700010042
+
+Linux Software (aDIO)
+
+Copyright (C), RTD Embedded Technologies, Inc.  All Rights Reserved.
+
+
+v01.00.00   RY
+------------------
+- Initial version
+
+
+v01.01.00 (rev A)   10/17/2003  RY
+------------------------------------------
+- Documented for ISA9000
+- Company name changed 
+- Standard header information added to all source files
+- README.TXT re-written
+- CHANGES.TXT re-written
+- LICENSE.TXT added
+- Makefiles updated
+
+
+v01.02.00 (rev B)   11/18/2003  RY
+------------------------------------------
+- Changed files and functions name "CPU DIO" to "aDIO" 
+
+
+v01.03.00 (rev C)   07/30/2004  RWB
+-------------------------------------------
+- Renamed upper level directory from adio/ to aDIO_Linux_v1.3/
+- Renamed CHANGES.txt to CHANGES.TXT
+- Renamed license.txt to LICENSE.TXT
+- Renamed README.txt to README.TXT
+- Renamed example/ to examples/
+- Changed permissions on all regular files to rw-rw-rw-
+- Changed permissions on all directories to rwxrwxrwx
+- Standardized file header documentation in all applicable files
+- Standardized source file names in driver/ and lib/
+- Moved all header files into include/
+- Removed stray object file from driver/
+- Deleted some stray executable files from examples/
+- Removed stray object file and library archive file from lib/
+- driver/Makefile changes:
+    * Replaced all references to adio.* with rtd-aDIO.*
+    * Removed ADIO_MAJOR
+    * Deleted -DCONFIG_KERNELD
+    * Standardized variable names
+    * Renamed device target to devices and reworked it to get major number
+      from /proc/devices
+- driver/rtd-aDIO.c changes:
+    * Reformatted the code in the functions adio_register_device(),
+      adio_unregister_device(), init_module(), and cleanup_module() to improve
+      readability
+    * Added code in init_module() to determine base I/O address by looking at
+      bits 4 through 6 in value read from I/O port 0x1F and decoding
+      appropriately; this is to support VIA CPU
+    * Renamed global variable major to aDIO_major, removed __initdata from its
+      definition, and deleted its assignment to ADIO_DEVICE_MAJOR
+    * Modified init_module() to ask kernel to dynamically allocate a character
+      device major number
+    * Added "void" as parameter type in adio_register_device()
+    * Removed unnecessary call to check_region() from adio_register_device()
+    * Added "void" as parameter type in adio_unregister_device()
+    * Removed module parameter "major"
+- examples/event.c changes:
+    * Changed #include of "../lib/adiolib.h" to <aDIO_library.h>
+    * When checking for failure of RemoveISR_aDio(), use -1 instead of false to
+      check its return code
+- examples/loop.c changes:
+    * Changed #include of "../lib/adiolib.h" to <aDIO_library.h>
+- examples/Makefile changes:
+    * Replaced all references to -ladio with -lrtd-aDIO
+    * Standardized variable names
+    * Added clean target
+- examples/mask.c changes:
+    * Changed #include of "../lib/adiolib.h" to <aDIO_library.h>
+    * When checking for failure of RemoveISR_aDio(), use -1 instead of false to
+      check its return code
+- examples/match.c changes:
+    * Changed #include of "../lib/adiolib.h" to <aDIO_library.h>
+    * When checking for failure of RemoveISR_aDio(), use -1 instead of false to
+      check its return code
+- examples/strobe.c changes:
+    * Changed #include of "../lib/adiolib.h" to <aDIO_library.h>
+    * When checking for failure of RemoveISR_aDio(), use -1 instead of false to
+      check its return code
+- include/aDIO_driver.h changes:
+    * Removed IO_BASE #define
+    * Deleted INT_PORT #define
+    * Changed DRIVER_NAME #define from "adio" to "rtd-aDIO"
+    * Removed ADIO_DEVICE_MAJOR #define
+    * Changed #include of "../include/adioioctl.h" to <aDIO_ioctl.h>
+    * Added ADIO_SETUP_PORT #define
+    * Added ADIO_ADDR_MASK #define
+    * Added ADIO_IRQ_MASK #define
+- include/aDIO_ioctl.h changes:
+    * Changed declaration of Port member in DEVICE_IO_Data structure from "int"
+      to "unsigned char"
+- include/aDIO_library changes:
+    * Changed #include of <adioioctl.h> to <aDIO_ioctl.h>
+    * Alphabetized function names
+    * Added void as parameter type to ClearDio_aDio()
+    * Added void as parameter type to close_aDio()
+    * Added void as parameter type to OpenDIO_aDio()
+    * Changed return type of ReadStrobe1_aDio() from bool to int
+    * Changed return type of RemoveISR_aDio() from bool to int
+    * Added void as parameter type to RemoveISR_aDio()
+    * Documented all functions
+- lib/librtd-aDIO.c changes:
+    * Changed #include of "adiolib.h" to <aDIO_library.h>
+    * In OpenDIO_aDio(), changed device name from "/dev/adio" to
+      "/dev/rtd-aDIO" on fopen() call
+    * Renamed first InPort() parameter from port to port_offset to better
+      reflect its purpose
+    * In InPort(), changed type of first parameter from "int" to
+      "unsigned char"
+    * Renamed first OutPort() parameter from port to port_offset to better
+      reflect its purpose
+    * In OutPort(), changed type of first parameter from "int" to
+      "unsigned char"
+    * Added static to ClearIrq_aDio() declaration
+    * Added static to InPort() declaration
+    * Added static to OutPort() declaration
+    * Added static to signal_handler() declaration
+    * Added void as parameter type to ClearDio_aDio()
+    * Added void as parameter type to ClearIrq_aDio()
+    * Added void as parameter type to close_aDio()
+    * Added void as parameter type to OpenDIO_aDio()
+    * In GetInterruptMode_aDio(), removed default label from switch statement
+      since it is not possible to have a bit value other than the four already
+      delineated in the switch statement
+    * Removed confusing and misleading comment about Control Register bits
+      being inverted from GetInterruptMode_aDio()
+    * Removed unnecessary local variable ret from ReadPort_aDio()
+    * Changed return type of ReadStrobe1_aDio() from bool to int
+    * Changed return type of RemoveISR_aDio() from bool to int
+    * Added void as parameter type to RemoveISR_aDio()
+    * Reworked RemoveISR_aDio() to return 0 or -1 instead of true or false
+    * Removed unnecessary local variable ret from WritePort_aDio()
+    * Modified InstallISR_aDio() to look for integer, not boolean, return code
+      from RemoveISR_aDio()
+    * Alphabetized exported functions
+    * Alphabetized private functions
+    * Documented all private functions
+- lib/Makefile changes:
+    * Replaced all references to adiolib.* with librtd-aDIO.*
+    * Standardized variable names
+- README.TXT changes:
+    * Standardized format
+    * Added "Known Limitations" section
+    * Removed "USAGE" section
+    * Deleted description of ioctl() request codes from "IOCTL Interface"
+      section and added reference to software manual
+
+v02.00.00 (rev D)   12/11/2006  DRD
+-------------------------------------------
+    * Added support for RTD's three different chipsets, Via, Geode, Intel.
+    * Ported from the 2.4 kernel to support 2.4 & 2.6
+    * Restructured the driver to work for an arbitrary number of aDIO boards
+      as determined by ADIO_MAX_BOARDS in /include/aDIO_driver.h
+    * Restructured interrupt handling.  Previous version passed signals from 
+      the kernel module to the user library.  This version relies on an
+      additional read() and poll() in the kernel module.  Basically the library
+      sets up a process to do nothing but read from the device file, but the file
+      is only considered readable after an interrupt has occurred.  
+    * Restructure library to work on specific boards instead of only one board.
+      The open function is passed a pointer to a pointer of a board descriptor.  
+      The library allocates memory for this descriptor and this parameter is then
+      passed to all the library functions to specify a specific boards.
+    * The final driver is now tested on Red Hat 8.0, 9.0 SUSE 9.1 & the latest
+      version of the kernel from www.kernel.org (2.6.19).
+
+v02.01.00 (rev E)   07/30/2007  KTS
+-------------------------------------------
+    * Removed the example programs: event.c, loop.c, mask.c, match.c, 
+      poll-evt.c, strobe.c
+    * Added new interactive programs: ints.c and ports.c
+    * The driver is now tested on Red Hat 9.0 and SUSE 10.2
+    * Removed uses of __initdata macro in the driver.  They were causing
+      section mismatch warnings when compiling the driver with the default 
+      SUSE 10.2 kernel version (2.6.18.2-34) or newer. 
+
+v02.02.00 (rev F)   04/30/2008 KTS
+-------------------------------------------
+    * Added support for the Geode LX.
+    * Removed spin locks around request_region because this function could
+      sleep.
+    * Renamed handler_t to adio_handler_t to fix a compatibility issue with
+      2.6.25 kernels.
+      
+v02.03.00 (rev G)   04/30/2009 WJT
+-------------------------------------------
+    * Added support for the Intel Montevina
+    * Switched interrupt handling to use pthread_create() instead of clone().
+    * Removed SetISRPriority_aDIO() and added two parameters to 
+      InstallISR_aDIO() to allow for process scheduling policy and priority
+      to be selected by the user (parameters ignored if not super user).
+      
+v03.00.00 (rev H)   07/12/2013 RGG
+-------------------------------------------
+    * Removed references to 2.4 kernel, and all references to pre-2.6.19 kernels.
+    * Fixed ioctl call change implemented in 2.6.35.
+    * Added support for AMD G-Series CPU
+    * Interrupt handler now preserves the state of the control register,
+      instead of leaving it in clear mode.
+
+v03.01.00 (rev I)   08/11/2014 RGG
+-------------------------------------------
+    * Added support for Chief River CPU
+    * Fixed compilation error in driver brought by changes in /proc system
+      in linux 3.11 kernel by removing the /proc entry from the driver.
+    * Driver now creates device files upon module insertion.
+    * Driver now uses GPLv2 license.  License should be included with release.
+    * Only 2 devices files are now created, instead of 8.
+    * The "minor_number_to_auto_detect" module parameter is no longer supported.
+    
+v03.02.00 (rev J)   03/17/2016  RGG
+-------------------------------------------
+    * Adding support for Baytrail CPU
+    * Simplified mapping of BIOS value to IRQ/address value in driver to
+      ease testing requirements.
+    
+    

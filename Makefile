@@ -2,13 +2,14 @@
 CC = g++
 EXEC = simulator checker main listen_pps route_telemetry turn_off inspect log_telemetry quick
 
-CXXFLAGS = -Inetwork -IaDIO -Wall -pthread
+CXXFLAGS = -Inetwork -IaDIO/include -Wall -pthread
 
 all: $(EXEC)
 
 clean:
 	make -C network clean
-	make -C aDIO clean
+	make -C aDIO/lib clean
+	make -C aDIO/driver clean
 	rm *.o $(EXEC)
 
 simulator: simulator.c serial.o
@@ -19,8 +20,11 @@ checker: checker.cpp serial.o ring.o
 
 main: main.o ring.o serial.o
 	make -C network all
-	make -C aDIO all
-	$(CC) -o $@ $^ network/*.o -pthread -LaDIO -lrtd-aDIO
+	make -C aDIO/lib all
+	$(CC) -o $@ $^ network/*.o -pthread -LaDIO/lib -lrtd-aDIO
+
+driver:
+	make -C aDIO/driver driver
 
 listen_pps: listen_pps.c serial.o
 	$(CC) -o $@ $^

@@ -13,3 +13,9 @@ quick
 
 *.bin
 logs
+
+aDIO/driver/*.ko
+aDIO/driver/*.cmd
+aDIO/driver/*.mod*
+aDIO/driver/Module.symvers
+aDIO/driver/modules.order

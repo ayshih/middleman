@@ -1,0 +1,48 @@
+#!/bin/bash
+#
+# This is a simple script file that determines the Chipset utilized
+# on the particular RTD motherboard.  This script is only intended
+# for RTD motherboards and not as a general purpose script file
+# for determining the chipset on a motherboard.  It works by retrieving
+# the primary pci bus controllers vendor id number, but it only checks 
+# for the chipsets that RTD utilizes and otherwise echos 
+# WARNING_UNKNOWN_RTD_CHIPSET
+#
+Baytrail=$( awk '/80860f1c/ {print $2}' < /proc/bus/pci/devices )
+Montevina=$( awk '/80862917/ {print $2}' < /proc/bus/pci/devices )
+Pentium_M=$( awk '/808624c0/ {print $2}' < /proc/bus/pci/devices )
+VIA=$( awk '/11060686/ {print $2}' < /proc/bus/pci/devices )
+Geode=$( awk '/10780100/ {print $2}' < /proc/bus/pci/devices )
+GeodeLX=$( awk '/10222090/ {print $2}' < /proc/bus/pci/devices )
+AMD_GSeries=$( awk '/1002439d/ {print $2}' < /proc/bus/pci/devices )
+ChiefRiver=$( awk '/80860154/ {print $2}' < /proc/bus/pci/devices )
+
+#echo -n $Montevina
+#echo -n $Pentium_M
+#echo -n $VIA
+#echo -n $Geode
+#echo -n $AMD_GSeries
+#echo -n " : "
+
+if  [ "$Baytrail" = 80860f1c ] ; then
+	echo "__INTEL_BAYTRAIL_CHIPSET"
+elif  [ "$Montevina" = 80862917 ] ; then
+	echo "__INTEL_MONTEVINA_CHIPSET"
+elif [ "$Pentium_M" = 808624C0 ] ; then
+	echo "__INTEL_855GME_CHIPSET"
+elif [ "$Pentium_M" = 808624c0 ]  ; then 
+	echo "__INTEL_855GME_CHIPSET"
+elif [ "$VIA" = 11060686 ] ; then 
+	echo "__VIA_CHIPSET"
+elif [ "$Geode" = 10780100 ] ;  then 
+	echo "__GEODE_CHIPSET"
+elif [ "$GeodeLX" = 10222090 ] ; then
+	echo "__GEODELX_CHIPSET"
+elif [ "$AMD_GSeries" = 1002439d ] ; then
+	echo "__AMD_GSERIES_CHIPSET"
+elif [ "$ChiefRiver" = 80860154 ] ; then
+	echo "__INTEL_CHIEF_RIVER_CHIPSET"
+else
+	echo "__WARNING_UNKNOWN_RTD_CHIPSET"
+fi
+
