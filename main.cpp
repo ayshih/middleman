@@ -160,6 +160,7 @@ struct gps_for_pps_struct gps_for_pps;
 void pps_tick();
 void *InternalPPSThread(void *threadargs);
 void pps_handler(isr_info_t info);
+bool pps_received = false;
 void *ExternalPPSThread(void *threadargs);
 
 void writeCurrentUT(char *buffer);
@@ -1146,6 +1147,8 @@ void pps_handler(isr_info_t info)
 
     pps_tick();
 
+    pps_received = true;
+
     TelemetryPacket tp_gps_pps(SYS_ID_GPS, TM_GPS_PPS, 0, current_monotonic_time());  // TODO: needs counter
 
     if (gps_for_pps.hour != 255) {  // we've received at least one GPS position packet
@@ -1213,6 +1216,8 @@ void *ExternalPPSThread(void *threadargs)
     int aDIO_ReturnVal;
     uint8_t IntMode;
 
+    uint32_t ticks = 0;
+
     // Open aDIO device
     aDIO_ReturnVal = OpenDIO_aDIO(&aDIO_Device, 0);
     if (aDIO_ReturnVal) {
@@ -1253,6 +1258,11 @@ void *ExternalPPSThread(void *threadargs)
                     while(!stop_message[tid])
                     {
                         usleep_force(USLEEP_ADIO);
+
+			if (!pps_received && (ticks++ > 10000000 / USLEEP_ADIO)) {
+			    std::cerr << "ExternalPPS ERROR:  No apparent PPS signal for 10 seconds\n";
+			    break;
+			}
                     }
                 }
 
@@ -1271,6 +1281,11 @@ void *ExternalPPSThread(void *threadargs)
         if (aDIO_ReturnVal) {
             std::cerr << "Error while closing ADIO = " << aDIO_ReturnVal << std::endl;
         }
+    }
+
+    if (!stop_message[tid]) {
+        std::cerr << "Falling back to fake PPS due to above error\n";
+        start_thread(InternalPPSThread, NULL);
     }
 
     printf("ExternalPPS thread #%d exiting\n", tid);
