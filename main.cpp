@@ -793,7 +793,11 @@ void *SerialListenerThread(void *threadargs)
 
     printf("SerialListener thread #%d [system 0x%02X]\n", tid, my_data->system_id);
 
-    device_fd[device_id] = setup_serial_port(device_id);  // TODO: close this
+    if (device_id == GPS_DEVICE) {
+        device_fd[device_id] = setup_serial_port(device_id, B4800);  // TODO: close this
+    } else {
+        device_fd[device_id] = setup_serial_port(device_id);  // TODO: close this
+    }
 
     printLogTimestamp();
     printf("Device /dev/ttyS%d opened for system 0x%02X\n", device_id, my_data->system_id);

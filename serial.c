@@ -7,7 +7,7 @@
 
 #include "serial.h"
 
-int setup_serial_port(int device_number)
+int setup_serial_port(int device_number, speed_t baud_rate)
 {
     char device[12];
     sprintf(device, "%s%d", DEVICE_STUB, device_number);
@@ -25,7 +25,7 @@ int setup_serial_port(int device_number)
     memset(&newtio, 0, sizeof(newtio)); /* clear struct for new port settings */
 
     /* man termios get more info on below settings */
-    newtio.c_cflag = BAUD_RATE | CS8 | CLOCAL | CREAD;
+    newtio.c_cflag = baud_rate | CS8 | CLOCAL | CREAD;  // should use cfsetspeed() instead
 
     newtio.c_iflag = 0;
     newtio.c_oflag = 0;
