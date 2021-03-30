@@ -1101,6 +1101,8 @@ void *InternalPPSThread(void *threadargs)
     clock_gettime(CLOCK_REALTIME, &assert_time);
     assert_time.tv_sec += 1;
 
+    uint32_t ticks = 0;
+
     timespec now;
 
     while(!stop_message[tid])
@@ -1121,6 +1123,15 @@ void *InternalPPSThread(void *threadargs)
         }
 
         assert_time.tv_sec += 1;
+
+        TelemetryPacket tp_fake_pps(SYS_ID_GPS, TM_GPS_PPS, 0, current_monotonic_time());  // TODO: needs counter
+
+        ticks++;
+
+        tp_fake_pps << (uint8_t)(0) << (uint8_t)(0) << (uint8_t)(0) << (uint8_t)(0) << (uint32_t)(0);
+        tp_fake_pps << ticks;
+
+        tm_packet_queue << tp_fake_pps;
     }
 
     printf("InternalPPS thread #%d exiting\n", tid);
