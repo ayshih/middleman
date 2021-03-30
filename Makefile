@@ -6,6 +6,19 @@ CXXFLAGS = -Inetwork -IaDIO/include -Wall -pthread
 
 all: $(EXEC)
 
+install: main driver
+	systemctl enable $(shell pwd)/middleman.service
+	ln -sf $(shell pwd)/rtd-aDIO.conf /etc/modules-load.d/
+	ln -sf $(shell pwd)/aDIO/driver/rtd-aDIO.ko /lib/modules/$(shell uname -r)/kernel/drivers/
+	depmod
+
+uninstall:
+	systemctl stop middleman
+	systemctl disable middleman
+	rm -f /etc/modules-load.d/rtd-aDIO.conf
+	rm -f /lib/modules/$(shell uname -r)/kernel/drivers/rtd-aDIO.ko
+	depmod
+
 clean:
 	make -C network clean
 	make -C aDIO/lib clean
