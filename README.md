@@ -17,11 +17,10 @@ The network code re-uses the GRIPS network code: https://github.com/GRIPS/networ
 * `quick`: A simple commander for testing locally
 
 ## Installation
-Run `make install`.
+To install the main executable program and the associated kernel driver, run `sudo make install`.
 
 The main program runs as a service.
-To enable the service, run `sudo systemctl enable middleman`.
-Here are commands for operating the service:
+Here are commands for interacting with the service:
 * `sudo systemctl start middleman`
 * `sudo systemctl stop middleman`
 * `systemctl status middleman`
@@ -29,3 +28,5 @@ Here are commands for operating the service:
 
 ## GSE
 For the GSE, run `bokeh serve --show mm_gse.py`.
+You can command the routing of telemetry in the upper left.
+The GSE currently gets laggy after hours of running due to inefficient plotting code.
