@@ -17,11 +17,15 @@ The network code re-uses the GRIPS network code: https://github.com/GRIPS/networ
 * `quick`: A simple commander for testing locally
 
 ## Installation
+Run `make install`.
+
 The main program runs as a service.
-Modify the path in `middleman.service` appropriately and then copy it to `/etc/systemd/system/`.
 To enable the service, run `sudo systemctl enable middleman`.
 Here are commands for operating the service:
 * `sudo systemctl start middleman`
 * `sudo systemctl stop middleman`
 * `systemctl status middleman`
 * `journalctl -u middleman`
+
+## GSE
+For the GSE, run `bokeh serve --show mm_gse.py`.
