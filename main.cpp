@@ -1153,7 +1153,7 @@ void pps_handler(isr_info_t info)
 
     uint8_t day_offset = 0;
     uint8_t hour = 0, minute = 0, second = 0;
-    uint32_t clock_difference = 0;
+    int32_t clock_difference = -1000000;
 
     if (gps_for_pps.hour != 255) {  // we've received at least one GPS position packet
         struct timespec now;
