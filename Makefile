@@ -1,6 +1,6 @@
 
 CC = g++
-EXEC = simulator checker main listen_pps route_telemetry turn_off inspect log_telemetry quick
+EXEC = simulator checker main listen_pps route_telemetry turn_off inspect log_telemetry quick playback
 
 CXXFLAGS = -Inetwork -IaDIO/include -Wall -pthread
 
@@ -61,6 +61,10 @@ log_telemetry: log_telemetry.o
 quick: quick.o
 	make -C network all
 	$(CC) -o $@ $^ network/*.o -pthread
+
+playback: playback.o
+	make -C network all
+	$(CC) -o $@ $^ network/*.o -pthread -static
 
 %.o: %.c %.h
 	$(CC) -c $< -o $@
