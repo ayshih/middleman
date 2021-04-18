@@ -1151,6 +1151,10 @@ void pps_handler(isr_info_t info)
 
     TelemetryPacket tp_gps_pps(SYS_ID_GPS, TM_GPS_PPS, 0, current_monotonic_time());  // TODO: needs counter
 
+    uint8_t day_offset = 0;
+    uint8_t hour = 0, minute = 0, second = 0;
+    uint32_t clock_difference = 0;
+
     if (gps_for_pps.hour != 255) {  // we've received at least one GPS position packet
         struct timespec now;
         struct tm now_tm, pps_tm, temp_tm;
@@ -1182,26 +1186,28 @@ void pps_handler(isr_info_t info)
         localtime_r(&false_pps_time, &pps_tm);  // false conversion is reversed
 
         // Account for the addition of second_offset resulting in day change
-        uint8_t day_offset = gps_for_pps.day_offset + (pps_tm.tm_mday != now_tm.tm_mday);
-        tp_gps_pps << day_offset;
+        day_offset = gps_for_pps.day_offset + (pps_tm.tm_mday != now_tm.tm_mday);
 
-        uint8_t hour = pps_tm.tm_hour, minute = pps_tm.tm_min, second=pps_tm.tm_sec;
-        tp_gps_pps << hour << minute << second;
+        hour = pps_tm.tm_hour;
+        minute = pps_tm.tm_min;
+        second = pps_tm.tm_sec;
 
         // False conversions cancel out, but the result can be off by a full day
         int32_t diff_seconds = false_sbc_time - false_pps_time;
         if (diff_seconds > 43200) diff_seconds -= 86400;
         if (diff_seconds < -43200) diff_seconds += 86400;
-        uint32_t clock_difference = diff_seconds * 1e6 + now.tv_nsec / 1e3;
-        tp_gps_pps << clock_difference;
-
-        tp_gps_pps << gps_for_pps.second_offset;
-
-        tm_packet_queue << tp_gps_pps;
-
-        // Protection in case we lose GPS position packets but are still getting PPS
-        gps_for_pps.second_offset++;
+        clock_difference = diff_seconds * 1e6 + now.tv_nsec / 1e3;
     }
+
+    tp_gps_pps << day_offset;
+    tp_gps_pps << hour << minute << second;
+    tp_gps_pps << clock_difference;
+    tp_gps_pps << gps_for_pps.second_offset;
+
+    tm_packet_queue << tp_gps_pps;
+
+    // Protection in case we lose GPS position packets but are still getting PPS
+    gps_for_pps.second_offset++;
 }
 
 
