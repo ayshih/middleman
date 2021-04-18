@@ -99,7 +99,6 @@ bool MODE_NETWORK = false;
 bool MODE_TIMING = false;
 bool MODE_VERBOSE = false;
 bool MODE_SIMULATED_DATA = false;
-bool MODE_FAKE_PPS = false;
 
 // interthread signals
 bool SIGNAL_RESET_TELEMETRYSENDER = false;
@@ -161,6 +160,7 @@ void pps_tick();
 void *InternalPPSThread(void *threadargs);
 void pps_handler(isr_info_t info);
 bool pps_received = false;
+bool use_fake_pps = false;
 void *ExternalPPSThread(void *threadargs);
 
 void writeCurrentUT(char *buffer);
@@ -1114,7 +1114,7 @@ void *InternalPPSThread(void *threadargs)
             clock_gettime(CLOCK_REALTIME, &now);
         }
 
-        pps_tick();
+        if (use_fake_pps) pps_tick();
 
         if(MODE_TIMING) {
             printf("PPS trigger start for %ld s (%ld us) was delayed by %f us\n",
@@ -1132,7 +1132,7 @@ void *InternalPPSThread(void *threadargs)
         tp_fake_pps << (uint8_t)(0) << (uint8_t)(0) << (uint8_t)(0) << (uint8_t)(0) << (uint32_t)(0);
         tp_fake_pps << ticks;
 
-        tm_packet_queue << tp_fake_pps;
+        if (use_fake_pps) tm_packet_queue << tp_fake_pps;
     }
 
     printf("InternalPPS thread #%d exiting\n", tid);
@@ -1259,10 +1259,32 @@ void *ExternalPPSThread(void *threadargs)
                     {
                         usleep_force(USLEEP_ADIO);
 
-			if (!pps_received && (ticks++ > 10000000 / USLEEP_ADIO)) {
-			    std::cerr << "ExternalPPS ERROR:  No apparent PPS signal for 10 seconds\n";
-			    break;
-			}
+                        if (pps_received) {
+                            pps_received = false;
+                            ticks = 0;  // restart the watchdog timer
+
+                            if (use_fake_pps) {
+                                printLogTimestamp();
+                                std::cout << "ExternalPPS: PPS pulse detected; blocking the fake PPS\n";
+
+                                use_fake_pps = false;
+                            }
+                        } else {
+                            if (ticks++ > 10000000 / USLEEP_ADIO) {
+                                ticks = 0;  // restart the watchdog timer
+                                if (!use_fake_pps) {
+                                    printLogTimestamp();
+                                    std::cout << "ExternalPPS: watchdog tripped; unblocking the fake PPS\n";
+
+                                    use_fake_pps = true;
+                                } else {
+                                    printLogTimestamp();
+                                    std::cout << "ExternalPPS: reconfiguring the PPS pulse width\n";
+
+                                    polled_write(serial_poll.fd, &serial_poll, command, strlen(command));
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -1281,11 +1303,6 @@ void *ExternalPPSThread(void *threadargs)
         if (aDIO_ReturnVal) {
             std::cerr << "Error while closing ADIO = " << aDIO_ReturnVal << std::endl;
         }
-    }
-
-    if (!stop_message[tid]) {
-        std::cerr << "Falling back to fake PPS due to above error\n";
-        start_thread(InternalPPSThread, NULL);
     }
 
     printf("ExternalPPS thread #%d exiting\n", tid);
@@ -1387,11 +1404,8 @@ void start_all_workers()
     start_thread(SerialListenerThread, &tdata);
     start_thread(GPSParserThread, NULL);
 
-    if (MODE_FAKE_PPS) {
-        start_thread(InternalPPSThread, NULL);
-    } else {
-        start_thread(ExternalPPSThread, NULL);
-    }
+    start_thread(InternalPPSThread, NULL);
+    start_thread(ExternalPPSThread, NULL);
 }
 
 int main(int argc, char *argv[])
@@ -1402,10 +1416,6 @@ int main(int argc, char *argv[])
         if(argv[i][0] == '-') {
             for(int j = 1; argv[i][j] != 0; j++) {
                 switch(argv[i][j]) {
-                    case 'f':
-                        std::cout << "Fake PPS mode\n";
-                        MODE_FAKE_PPS = true;
-                        break;
                     case 'i':
                         strncpy(ip_tm, &argv[i][j+1], 20);
                         ip_tm[19] = 0;
@@ -1429,7 +1439,6 @@ int main(int argc, char *argv[])
                         break;
                     case '?':
                         std::cout << "Command-line options:\n";
-                        std::cout << "-f      Fake PPS mode (internal rather than GPS)\n";
                         std::cout << "-i<ip>  Send telemetry packets to this IP (instead of the FC's IP)\n";
                         std::cout << "-n      Display network packets (can be crazy!)\n";
                         std::cout << "-s      Verify simulated data in the detector packets\n";
