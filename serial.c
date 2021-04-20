@@ -27,7 +27,7 @@ int setup_serial_port(int device_number, speed_t baud_rate)
     /* man termios get more info on below settings */
     newtio.c_cflag = baud_rate | CS8 | CLOCAL | CREAD;  // should use cfsetspeed() instead
 
-    newtio.c_iflag = 0;
+    newtio.c_iflag = PARMRK;
     newtio.c_oflag = 0;
     newtio.c_lflag = 0;
 
