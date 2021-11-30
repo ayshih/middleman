@@ -94,7 +94,10 @@ async def parse_statistics(data):
     for i in range(8):
         new_statistics[f'events_{i}'] = [struct.unpack('H', data[6*i + 16: 6*i + 18])[0]]
         new_statistics[f'remain_{i}'] = [struct.unpack('H', data[6*i + 18: 6*i + 20])[0]]
-        new_statistics[f'bad_{i}'] = [struct.unpack('H', data[6*i + 20: 6*i + 22])[0]]
+        bad_bytes = struct.unpack('H', data[6*i + 20: 6*i + 22])[0]
+        new_statistics[f'bad_{i}'] = [bad_bytes]
+        if bad_bytes > 0:
+            print(f"Gondola time: {data[10:16].hex()}, Imager: {i}, Number of bad bytes: {bad_bytes}")
 
     doc.add_next_tick_callback(partial(statistics.stream, new_statistics))
 
@@ -115,7 +118,8 @@ async def parse_gps_position(data):
         gps_info['gondola'] = struct.unpack('q', data[10:16] + b'00')[0] / 1e7
 
         if data[36] != 1:
-            print(gps_info)
+            #print(gps_info)
+            pass
 
     doc.add_next_tick_callback(update_gps_info_div)
 
