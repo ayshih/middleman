@@ -28,6 +28,9 @@ clean:
 simulator: simulator.c serial.o
 	$(CC) -o $@ $^
 
+playserial: playserial.c serial.o
+	$(CC) -o $@ $^
+
 checker: checker.cpp serial.o ring.o
 	$(CC) -o $@ $^
 

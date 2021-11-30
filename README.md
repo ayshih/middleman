@@ -16,6 +16,7 @@ The network code re-uses the GRIPS network code: https://github.com/GRIPS/networ
   Be aware that the `network` submodule also contains useful utilities (`listen_telemetry`, `fake_telemetry`, etc.).
 * `quick`: A simple commander for testing locally
 * `playback`: Play back a telemetry file as fresh UDP packets
+* `playserial`: Play back a raw serial file as a fresh stream to a serial device
 
 ## Installation
 To install the main executable program and the associated kernel driver, run `sudo make install`.
