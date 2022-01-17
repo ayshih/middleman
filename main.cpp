@@ -16,9 +16,9 @@
 #define USLEEP_ADIO              10000 // wait time for aDIO operations
 
 //IP addresses
-#define IP_FC "192.168.2.100"
+#define IP_GROUND "192.168.2.100"
 #define IP_LOOPBACK "127.0.0.1"
-#define IP_TM IP_LOOPBACK //default IP address unless overridden on the command line
+#define IP_TM IP_GROUND //default IP address unless overridden on the command line
 
 //UDP ports, aside from PORT_IMAGE, which is TCP
 #define PORT_CMD      50501 // commands, FC (receive)
