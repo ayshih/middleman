@@ -4,7 +4,7 @@
 
 #include "ring.hpp"
 
-uint8_t packet_size_by_id[8] = {7, 11, 11, 11, 11, 8, 18, 10};
+uint8_t imager_packet_size_by_id[8] = {7, 11, 11, 11, 11, 8, 18, 10};
 
 RingBuffer::RingBuffer()
 {
@@ -57,7 +57,7 @@ int32_t RingBuffer::pop(void *ptr, uint16_t num)
     return result;
 }
 
-int32_t RingBuffer::smart_pop(void *ptr)
+int32_t RingBuffer::smart_pop_imager(void *ptr)
 {
     // local copy since there may be active writing
     uint32_t this_write_index = this->write_index;
@@ -74,10 +74,35 @@ int32_t RingBuffer::smart_pop(void *ptr)
     if((byte1 & 0b11111100) == 0b10101100) {
         uint8_t id = ((byte1 & 0b11) << 1) | (byte2 >> 7);
         if(id < 8) {
-            uint8_t packet_size = packet_size_by_id[id];
+            uint8_t packet_size = imager_packet_size_by_id[id];
             if(this_size < packet_size) return 0;
             return pop(ptr, packet_size);
        }
+    }
+
+    // Not a valid header, so advance one byte and return an error
+    this->read_index = (this->read_index + 1) % BUFFER_SIZE;
+    return -1;
+}
+
+int32_t RingBuffer::smart_pop_spectrometer(void *ptr)
+{
+    // local copy since there may be active writing
+    uint32_t this_write_index = this->write_index;
+
+    uint32_t this_size = (BUFFER_SIZE + this_write_index - this->read_index) % BUFFER_SIZE;
+
+    if(this_size == 0) return 0;
+
+    //printf("R/W: %d %d\n", this->read_index, this_write_index);
+
+    uint8_t byte1 = this->buffer[this->read_index];
+    uint8_t byte2 = this->buffer[(this->read_index + 1) % BUFFER_SIZE];
+
+    if((byte1 == 0xEB) && (byte2 == 0x90)) {
+        uint8_t packet_size = 52;
+        if(this_size < packet_size) return 0;
+        return pop(ptr, packet_size);
     }
 
     // Not a valid header, so advance one byte and return an error

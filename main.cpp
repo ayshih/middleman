@@ -4,9 +4,6 @@
 
 #define LOG_LOCATION "/home/ayshih/middleman/logs"
 
-#define GPS_DEVICE 0 // 0 == /dev/ttyS0
-#define SIP1_DEVICE 1 // 1 == /dev/ttyS1
-
 //Sleep settings (microseconds)
 #define USLEEP_KILL            3000000 // how long to wait before terminating threads
 #define USLEEP_TM_SEND            1000 // period for popping off the telemetry queue
@@ -146,9 +143,10 @@ void queue_cmd_proc_ack_tmpacket( uint8_t error_code, uint64_t response );
 //void queue_settings_tmpacket();
 
 void *SerialListenerThread(void *threadargs);
-void *ImagerParserThread(void *threadargs);
-void *GPSParserThread(void *threadargs);
 void *SIPParserThread(void *threadargs);
+void *GPSParserThread(void *threadargs);
+void *ImagerParserThread(void *threadargs);
+void *SpectrometerParserThread(void *threadargs);
 
 struct gps_for_pps_struct{
     uint8_t hour = 255;
@@ -178,23 +176,17 @@ uint16_t imager_counts[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 uint32_t imager_bytes[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 uint32_t imager_bad_bytes[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 
+uint32_t spectrometer_bad_bytes[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+
 int device_fd[32];
 RingBuffer ring_buffer[32];
 
-uint8_t imager_to_device_map[16] = {4,  5,  6,  7,  8,  9, 10, 11};
-
-uint8_t system_id_to_device_id(uint8_t system_id)
-{
-    switch(system_id & 0xF8)
-    {
-        case SYS_ID_IMG:
-            return imager_to_device_map[system_id & 0x07];
-        default:
-            fprintf(stderr, "Unknown system ID\n");
-            return 255;
-    }
-}
-
+uint8_t device_id_to_system_id[20] = {SYS_ID_GPS, SYS_ID_SIP, 255, 255,
+                                      SYS_ID_IMG, SYS_ID_IMG+1, SYS_ID_IMG+2, SYS_ID_IMG+3,
+                                      SYS_ID_IMG+4, SYS_ID_IMG+5, SYS_ID_IMG+6, SYS_ID_IMG+7,
+                                      255, 255, 255, 255,
+                                      255, 255, 255, 255};
+uint8_t system_id_to_device_id[256]; // populated in main()
 
 void sig_handler(int signum)
 {
@@ -431,7 +423,10 @@ void *TelemetryHousekeepingThread(void *threadargs)
         memset(&imager_bad_bytes, 0, sizeof(imager_bad_bytes));
 
         uint8_t i;
-        for (i = 0; i < 8; i++) buffer_sizes[i] = ring_buffer[imager_to_device_map[i]].size();
+        for (i = 0; i < 8; i++) {
+            uint8_t device_id = system_id_to_device_id[SYS_ID_IMG+i];
+            if (device_id != 255) buffer_sizes[i] = ring_buffer[device_id].size();
+        }
 
         /*
         printLogTimestamp();
@@ -800,31 +795,32 @@ void *SerialListenerThread(void *threadargs)
     Thread_data *my_data = (Thread_data *) threadargs;
     int tid = my_data->thread_id;
 
-    uint8_t device_id;
-    switch(my_data->system_id & 0xF0) {
-        case 0x10:
-            device_id = SIP1_DEVICE;
-            break;
-        case 0x60:
-            device_id = GPS_DEVICE;
-            break;
-        case 0xC0:
-            device_id = system_id_to_device_id(my_data->system_id);
-            break;
-        default:
-            std::cerr << "Unknown system ID for serial listening\n";
-            started[tid] = false;
-            pthread_exit(NULL);
+    uint8_t device_id = system_id_to_device_id[my_data->system_id];
+    if (device_id == 255) {
+        std::cerr << "Unknown system ID for serial listening\n";
+        started[tid] = false;
+        pthread_exit(NULL);
     }
 
     printf("SerialListener thread #%d [system 0x%02X]\n", tid, my_data->system_id);
 
-    if (device_id == SIP1_DEVICE) {
-        device_fd[device_id] = setup_serial_port(device_id, B1200);  // TODO: close this
-    } else if (device_id == GPS_DEVICE) {
-        device_fd[device_id] = setup_serial_port(device_id, B4800);  // TODO: close this
-    } else {
-        device_fd[device_id] = setup_serial_port(device_id);  // TODO: close this
+    switch(my_data->system_id & 0xF0) {
+        case SYS_ID_SIP:
+            device_fd[device_id] = setup_serial_port(device_id, B1200);  // TODO: close this
+            break;
+        case SYS_ID_GPS:
+            device_fd[device_id] = setup_serial_port(device_id, B4800);  // TODO: close this
+            break;
+        case SYS_ID_IMG:
+            device_fd[device_id] = setup_serial_port(device_id, B230400);  // TODO: close this
+            break;
+        case SYS_ID_NAI:
+            device_fd[device_id] = setup_serial_port(device_id, B19200);  // TODO: close this
+            break;
+        default:
+            std::cerr << "Invalid system ID for serial listening\n";
+            started[tid] = false;
+            pthread_exit(NULL);
     }
 
     printLogTimestamp();
@@ -861,7 +857,7 @@ void *ImagerParserThread(void *threadargs)
 {
     Thread_data *my_data = (Thread_data *) threadargs;
     int tid = my_data->thread_id;
-    uint8_t device_id = system_id_to_device_id(my_data->system_id);
+    uint8_t device_id = system_id_to_device_id[my_data->system_id];
 
     printf("ImagerParser thread #%d [system 0x%02X]\n", tid, my_data->system_id);
 
@@ -875,7 +871,7 @@ void *ImagerParserThread(void *threadargs)
     while(!stop_message[tid])
     {
         int packet_size;
-        while((packet_size = ring_buffer[device_id].smart_pop(packet_buffer)) != 0) {
+        while((packet_size = ring_buffer[device_id].smart_pop_imager(packet_buffer)) != 0) {
             if(packet_size == -1) {
                 fprintf(stderr, "Skipping a byte on device %d\n", device_id);
                 imager_bad_bytes[my_data->system_id & 0b111]++;
@@ -938,6 +934,42 @@ void *ImagerParserThread(void *threadargs)
 }
 
 
+void *SpectrometerParserThread(void *threadargs)
+{
+    Thread_data *my_data = (Thread_data *) threadargs;
+    int tid = my_data->thread_id;
+    uint8_t device_id = system_id_to_device_id[my_data->system_id];
+
+    printf("SpectrometerParser thread #%d [system 0x%02X]\n", tid, my_data->system_id);
+
+    char packet_buffer[1024];
+
+    while(!stop_message[tid])
+    {
+        int packet_size;
+        while((packet_size = ring_buffer[device_id].smart_pop_spectrometer(packet_buffer)) != 0) {
+            if(packet_size == -1) {
+                fprintf(stderr, "Skipping a byte on device %d\n", device_id);
+                spectrometer_bad_bytes[my_data->system_id & 0b111]++;
+                continue;
+            }
+
+            if(MODE_VERBOSE) {
+                printLogTimestamp();
+                printf("Parsed a spectrometer packet of %d bytes from device %d\n", packet_size, device_id);
+            }
+
+        }
+
+        usleep_force(USLEEP_SERIAL_PARSER);
+    }
+
+    printf("SpectrometerParser thread #%d [device %d] exiting\n", tid, device_id);
+    started[tid] = false;
+    pthread_exit( NULL );
+}
+
+
 bool verify_nmea_checksum(char *buf, int buf_size)
 {
     uint8_t xor_checksum = buf[1];
@@ -969,18 +1001,20 @@ void *GPSParserThread(void *threadargs)
     char packet_buffer[1024], saved_buffer[1024];
     char *argv[30];
 
+    uint8_t gps_device = system_id_to_device_id[SYS_ID_GPS];
+
     while(!stop_message[tid])
     {
         int packet_size;
-        while((packet_size = ring_buffer[GPS_DEVICE].smart_pop_nmea(packet_buffer)) != 0) {
+        while((packet_size = ring_buffer[gps_device].smart_pop_nmea(packet_buffer)) != 0) {
             if(packet_size == -1) {
-                fprintf(stderr, "Skipping a byte on device %d\n", GPS_DEVICE);
+                fprintf(stderr, "Skipping a byte on device %d\n", gps_device);
                 continue;
             }
 
             if(MODE_VERBOSE) {
                 printLogTimestamp();
-                printf("Parsed a GPS packet of %d bytes from device %d\n", packet_size, GPS_DEVICE);
+                printf("Parsed a GPS packet of %d bytes from device %d\n", packet_size, gps_device);
             }
 
             // Check the NMEA checksum
@@ -1113,8 +1147,9 @@ void *SIPParserThread(void *threadargs)
 {
     Thread_data *my_data = (Thread_data *) threadargs;
     int tid = my_data->thread_id;
+    uint8_t device_id = system_id_to_device_id[my_data->system_id];
 
-    printf("SIPParser thread #%d\n", tid);
+    printf("SIPParser thread #%d [system 0x%02X]\n", tid, my_data->system_id);
 
     char packet_buffer[1024], cmd_buffer[1024];
     RingBuffer cmd_ring_buffer;
@@ -1122,15 +1157,15 @@ void *SIPParserThread(void *threadargs)
     while(!stop_message[tid])
     {
         int packet_size;
-        while((packet_size = ring_buffer[SIP1_DEVICE].smart_pop_sip(packet_buffer)) != 0) {
+        while((packet_size = ring_buffer[device_id].smart_pop_sip(packet_buffer)) != 0) {
             if(packet_size == -1) {
-                fprintf(stderr, "Skipping a byte on device %d\n", SIP1_DEVICE);
+                fprintf(stderr, "Skipping a byte on device %d\n", device_id);
                 continue;
             }
 
             if(MODE_VERBOSE) {
                 printLogTimestamp();
-                printf("Parsed a SIP packet of %d bytes from device %d\n", packet_size, SIP1_DEVICE);
+                printf("Parsed a SIP packet of %d bytes from device %d\n", packet_size, device_id);
             printf("SIP packet: ");
             for (int i=0; i<packet_size; i++) {
                 printf("0x%02X ", packet_buffer[i]);
@@ -1152,7 +1187,7 @@ void *SIPParserThread(void *threadargs)
                     printf("\n");
 
                     struct pollfd serial_poll;
-                    serial_poll.fd = device_fd[SIP1_DEVICE];
+                    serial_poll.fd = device_fd[device_id];
                     serial_poll.events = POLLOUT;
                     polled_write(serial_poll.fd, &serial_poll, sbd_packet, 259);
 
@@ -1184,15 +1219,21 @@ void pps_tick()
     RTS_flag = TIOCM_RTS;
 
     // Assert the RTS line
-    for(int i = 0; i < 8; i++) {
-        ioctl(device_fd[imager_to_device_map[i]], TIOCMBIS, &RTS_flag);
+    for(int i = 0; i < 32; i++) {
+        int device_id = system_id_to_device_id[SYS_ID_IMG + i]; // SYS_ID_NAI comes after SYS_ID_IMG
+        if (device_id != 255) {
+            ioctl(device_fd[device_id], TIOCMBIS, &RTS_flag);
+        }
     }
 
     usleep_force(5000);
 
     // Clear the RTS line
-    for(int i = 0; i < 8; i++) {
-        ioctl(device_fd[imager_to_device_map[i]], TIOCMBIC, &RTS_flag);
+    for(int i = 0; i < 32; i++) {
+        int device_id = system_id_to_device_id[SYS_ID_IMG + i]; // SYS_ID_NAI comes after SYS_ID_IMG
+        if (device_id != 255) {
+            ioctl(device_fd[device_id], TIOCMBIC, &RTS_flag);
+        }
     }
 }
 
@@ -1330,6 +1371,8 @@ void *ExternalPPSThread(void *threadargs)
 
     uint32_t ticks = 0;
 
+    uint8_t gps_device = system_id_to_device_id[SYS_ID_GPS];
+
     // Open aDIO device
     aDIO_ReturnVal = OpenDIO_aDIO(&aDIO_Device, 0);
     if (aDIO_ReturnVal) {
@@ -1359,7 +1402,7 @@ void *ExternalPPSThread(void *threadargs)
                     std::cerr << "ExternalPPS ERROR:  GetInterruptMode_aDIO() FAILED\n";
                 } else {
                     struct pollfd serial_poll;
-                    serial_poll.fd = device_fd[GPS_DEVICE];
+                    serial_poll.fd = device_fd[gps_device];
                     serial_poll.events = POLLOUT;
 
                     // Set the PPS pulse width to 500 ms
@@ -1511,20 +1554,29 @@ void start_all_workers()
     Thread_data tdata;
     memset(&tdata, 0, sizeof(Thread_data));
 
-    // Imager threads
-    for(int i = 0; i < 8; i++) {
-        tdata.system_id = SYS_ID_IMG + i;
-        start_thread(SerialListenerThread, &tdata); 
-        start_thread(ImagerParserThread, &tdata);
+    // Open serial devices as needed
+    for(int j = 0; j < 20; j++) {
+        tdata.system_id = device_id_to_system_id[j];
+        if(tdata.system_id != 255) {
+            start_thread(SerialListenerThread, &tdata);
+            switch(tdata.system_id & 0xF0) {
+                case SYS_ID_SIP:
+                    start_thread(SIPParserThread, &tdata);
+                    break;
+                case SYS_ID_GPS:
+                    start_thread(GPSParserThread, &tdata);
+                    break;
+                case SYS_ID_IMG:
+                    start_thread(ImagerParserThread, &tdata);
+                    break;
+                case SYS_ID_NAI:
+                    start_thread(SpectrometerParserThread, &tdata);
+                    break;
+                default:
+                    fprintf(stderr, "Unknown system ID (%02X) for serial device /dev/tty%d\n", tdata.system_id, j);
+            }
+        }
     }
-
-    tdata.system_id = SYS_ID_GPS;
-    start_thread(SerialListenerThread, &tdata);
-    start_thread(GPSParserThread, NULL);
-
-    tdata.system_id = SYS_ID_SIP;
-    start_thread(SerialListenerThread, &tdata);
-    start_thread(SIPParserThread, NULL);
 
     start_thread(InternalPPSThread, NULL);
     start_thread(ExternalPPSThread, NULL);
@@ -1587,6 +1639,14 @@ int main(int argc, char *argv[])
 
     // Turn off buffering of stdout
     setbuf(stdout, NULL);
+
+    // Create the inverse map of system ID to device ID
+    memset(&system_id_to_device_id, 255, sizeof(system_id_to_device_id));
+    for(int j = 0; j < 20; j++) {
+        if(device_id_to_system_id[j] != 255) {
+            system_id_to_device_id[device_id_to_system_id[j]] = j;
+        }
+    }
 
     printLogTimestamp();
     std::cout << "Sending telemetry to " << ip_tm << std::endl;

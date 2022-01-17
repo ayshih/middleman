@@ -20,9 +20,17 @@ class RingBuffer {
         int32_t peek(void *ptr, uint16_t num);
         uint32_t size();
 
-        int32_t smart_pop(void *ptr);
+        // UW instruments
+        int32_t smart_pop_imager(void *ptr);
+        int32_t smart_pop_spectrometer(void *ptr);
+
+        // GPS device
         int32_t smart_pop_nmea(void *ptr);
+
+        // SIP command packets
         int32_t smart_pop_sip(void *ptr);
+
+        // Reconstructed BOOMS command packets
         int32_t smart_pop_booms_cmd(void *ptr);
 
         void clear();
