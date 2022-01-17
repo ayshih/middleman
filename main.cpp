@@ -5,6 +5,7 @@
 #define LOG_LOCATION "/home/ayshih/middleman/logs"
 
 #define GPS_DEVICE 0 // 0 == /dev/ttyS0
+#define SIP1_DEVICE 1 // 1 == /dev/ttyS1
 
 //Sleep settings (microseconds)
 #define USLEEP_KILL            3000000 // how long to wait before terminating threads
@@ -33,6 +34,7 @@
 
 //BOOMS system ID
 #define SYS_ID_FC  0x00
+#define SYS_ID_SIP 0x10
 #define SYS_ID_GPS 0x60
 #define SYS_ID_MM  0xA0
 #define SYS_ID_BGO 0xB0
@@ -146,6 +148,7 @@ void queue_cmd_proc_ack_tmpacket( uint8_t error_code, uint64_t response );
 void *SerialListenerThread(void *threadargs);
 void *ImagerParserThread(void *threadargs);
 void *GPSParserThread(void *threadargs);
+void *SIPParserThread(void *threadargs);
 
 struct gps_for_pps_struct{
     uint8_t hour = 255;
@@ -780,6 +783,9 @@ void *SerialListenerThread(void *threadargs)
 
     uint8_t device_id;
     switch(my_data->system_id & 0xF0) {
+        case 0x10:
+            device_id = SIP1_DEVICE;
+            break;
         case 0x60:
             device_id = GPS_DEVICE;
             break;
@@ -794,7 +800,9 @@ void *SerialListenerThread(void *threadargs)
 
     printf("SerialListener thread #%d [system 0x%02X]\n", tid, my_data->system_id);
 
-    if (device_id == GPS_DEVICE) {
+    if (device_id == SIP1_DEVICE) {
+        device_fd[device_id] = setup_serial_port(device_id, B1200);  // TODO: close this
+    } else if (device_id == GPS_DEVICE) {
         device_fd[device_id] = setup_serial_port(device_id, B4800);  // TODO: close this
     } else {
         device_fd[device_id] = setup_serial_port(device_id);  // TODO: close this
@@ -816,7 +824,7 @@ void *SerialListenerThread(void *threadargs)
         if(c > 0) {
             if(MODE_VERBOSE) {
                 printLogTimestamp();
-                printf("Read %d bytes from device %d\n", c, device_id);
+                printf("Read %d bytes from device %d (starts with 0x%02X)\n", c, device_id, read_buffer[0]);
             }
             ring_buffer[device_id].append(read_buffer, c);
 
@@ -1072,6 +1080,85 @@ void *GPSParserThread(void *threadargs)
 }
 
 
+void assemble_sbd_packet(uint8_t *sbd_packet)
+{
+    sbd_packet[0] = 0x10;
+    sbd_packet[1] = 0x53;
+    sbd_packet[2] = 255;
+    for (int i=0; i<255; i++) sbd_packet[i+3] = i;
+    sbd_packet[258] = 0x03;
+}
+
+
+void *SIPParserThread(void *threadargs)
+{
+    Thread_data *my_data = (Thread_data *) threadargs;
+    int tid = my_data->thread_id;
+
+    printf("SIPParser thread #%d\n", tid);
+
+    char packet_buffer[1024], cmd_buffer[1024];
+    RingBuffer cmd_ring_buffer;
+
+    while(!stop_message[tid])
+    {
+        int packet_size;
+        while((packet_size = ring_buffer[SIP1_DEVICE].smart_pop_sip(packet_buffer)) != 0) {
+            if(packet_size == -1) {
+                fprintf(stderr, "Skipping a byte on device %d\n", SIP1_DEVICE);
+                continue;
+            }
+
+            if(MODE_VERBOSE) {
+                printLogTimestamp();
+                printf("Parsed a SIP packet of %d bytes from device %d\n", packet_size, SIP1_DEVICE);
+            printf("SIP packet: ");
+            for (int i=0; i<packet_size; i++) {
+                printf("0x%02X ", packet_buffer[i]);
+            }
+            printf("\n");
+            }
+
+            switch(packet_buffer[1]) {
+                case 0x13:
+                    printf("SIP has requested science data\n");
+                    uint8_t sbd_packet[259];
+
+                    assemble_sbd_packet(sbd_packet);
+
+                    printf("Sending back: ");
+                    for (int i=0; i<259; i++) {
+                        printf("0x%02X ", sbd_packet[i]);
+                    }
+                    printf("\n");
+
+                    struct pollfd serial_poll;
+                    serial_poll.fd = device_fd[SIP1_DEVICE];
+                    serial_poll.events = POLLOUT;
+                    polled_write(serial_poll.fd, &serial_poll, sbd_packet, 259);
+
+                    break;
+                case 0x14:
+                    cmd_ring_buffer.append(packet_buffer+3, packet_buffer[2]);
+                    int cmd_packet_size;
+                    while((cmd_packet_size = cmd_ring_buffer.smart_pop_booms_cmd(cmd_buffer)) == -1) {}
+                    if(cmd_packet_size > 0) {
+                        CommandPacket cp = CommandPacket((uint8_t *)cmd_buffer, cmd_packet_size);
+                        cm_packet_queue << cp;
+                    }
+                    break;
+            }
+        }
+
+        usleep_force(USLEEP_SERIAL_PARSER);
+    }
+
+    printf("SIPParser thread #%d exiting\n", tid);
+    started[tid] = false;
+    pthread_exit( NULL );
+}
+
+
 void pps_tick()
 {
     int RTS_flag;
@@ -1311,6 +1398,8 @@ void *ExternalPPSThread(void *threadargs)
         }
     }
 
+    use_fake_pps = true;
+
     printf("ExternalPPS thread #%d exiting\n", tid);
     started[tid] = false;
     pthread_exit( NULL );
@@ -1409,6 +1498,10 @@ void start_all_workers()
     tdata.system_id = SYS_ID_GPS;
     start_thread(SerialListenerThread, &tdata);
     start_thread(GPSParserThread, NULL);
+
+    tdata.system_id = SYS_ID_SIP;
+    start_thread(SerialListenerThread, &tdata);
+    start_thread(SIPParserThread, NULL);
 
     start_thread(InternalPPSThread, NULL);
     start_thread(ExternalPPSThread, NULL);

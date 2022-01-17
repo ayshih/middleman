@@ -47,11 +47,11 @@ int32_t RingBuffer::pop(void *ptr, uint16_t num)
 
     if (result == num) {
         int32_t num_overflow = (this->read_index + num) - BUFFER_SIZE;
-	if (num_overflow < 0) {
+        if (num_overflow < 0) {
             this->read_index += num;
         } else {
             this->read_index = num_overflow;
-	}
+        }
     }
 
     return result;
@@ -100,19 +100,76 @@ int32_t RingBuffer::smart_pop_nmea(void *ptr)
     //printf("R/W: %d %d\n", this->read_index, this_write_index);
 
     if (new_buffer[0] == '$') {
-	for(uint32_t i = 1; i < this_size; i++) {
-	    switch(new_buffer[i]) {
-		case '\n': // found end of NMEA packet
-		    return pop(ptr, i+1);
-		case '$': // found start of next NMEA packet
-		    this->read_index = (this->read_index + i) % BUFFER_SIZE;
-		    return -1;
+        for(uint32_t i = 1; i < this_size; i++) {
+            switch(new_buffer[i]) {
+                case '\n': // found end of NMEA packet
+                    return pop(ptr, i+1);
+                case '$': // found start of next NMEA packet
+                    this->read_index = (this->read_index + i) % BUFFER_SIZE;
+                    return -1;
             }
-	}
-	return 0; // still waiting for end of NMEA packet
+        }
+        return 0; // still waiting for end of NMEA packet
     }
 
     // Not the start of a NMEA packet, so advance one byte and return an error
+    this->read_index = (this->read_index + 1) % BUFFER_SIZE;
+    return -1;
+}
+
+int32_t RingBuffer::smart_pop_sip(void *ptr)
+{
+    // local copy since there may be active writing
+    uint32_t this_write_index = this->write_index;
+
+    uint32_t this_size = (BUFFER_SIZE + this_write_index - this->read_index) % BUFFER_SIZE;
+
+    if(this_size < 3) return 0;
+
+    uint8_t new_buffer[BUFFER_SIZE];
+    peek(new_buffer, this_size);
+
+    //printf("R/W: %d %d\n", this->read_index, this_write_index);
+
+    if (new_buffer[0] == 0x10) {
+        switch(new_buffer[1]) {
+            case 0x13:
+                if(new_buffer[2] == 0x03) return pop(ptr, 3);
+                break;
+            case 0x14:
+                uint16_t length = new_buffer[2];
+                if(this_size < uint32_t(length+4)) return 0;
+                if(new_buffer[length+3] == 0x03) return pop(ptr, length+4);
+                break;
+        }
+    }
+
+    // Not a valid parsing, so advance one byte and return an error
+    this->read_index = (this->read_index + 1) % BUFFER_SIZE;
+    return -1;
+}
+
+int32_t RingBuffer::smart_pop_booms_cmd(void *ptr)
+{
+    // local copy since there may be active writing
+    uint32_t this_write_index = this->write_index;
+
+    uint32_t this_size = (BUFFER_SIZE + this_write_index - this->read_index) % BUFFER_SIZE;
+
+    if(this_size < 8) return 0;
+
+    uint8_t new_buffer[BUFFER_SIZE];
+    peek(new_buffer, this_size);
+
+    //printf("R/W: %d %d\n", this->read_index, this_write_index);
+
+    if ((new_buffer[0] == 0x90) && (new_buffer[1] == 0xEB)) {
+        uint16_t length = new_buffer[7];
+        if(this_size < uint32_t(8+length)) return 0;
+        return pop(ptr, 8+length);
+    }
+
+    // Not a valid parsing, so advance one byte and return an error
     this->read_index = (this->read_index + 1) % BUFFER_SIZE;
     return -1;
 }

@@ -34,7 +34,7 @@ int main(int argc, char * argv[])
         memcpy(buffer + 2, &count, sizeof(count));
 
         // Mock event packet
-	char id = 0b000;
+        char id = 0b000;
         buffer[0] = 0b10101100 | (id >> 1);
         buffer[1] = (id & 0b001) << 7;
         ssize_t c = polled_write(fd, &serial_poll, buffer, 7);
@@ -44,7 +44,7 @@ int main(int argc, char * argv[])
 
         // Mock deadtime packet (1 Hz)
         if(count % events_per_sec == 0) {
-	    id = 0b111;
+            id = 0b111;
             buffer[0] = 0b10101100 | (id >> 1);
             buffer[1] = (id & 0b001) << 7;
             ssize_t c = polled_write(fd, &serial_poll, buffer, 10);
@@ -52,7 +52,7 @@ int main(int argc, char * argv[])
 
         // Mock housekeeping packet (0.1 Hz)
         if(count % (events_per_sec * 10) == 0) {
-	    id = 0b110;
+            id = 0b110;
             buffer[0] = 0b10101100 | (id >> 1);
             buffer[1] = (id & 0b001) << 7;
             ssize_t c = polled_write(fd, &serial_poll, buffer, 18);

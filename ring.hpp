@@ -20,8 +20,10 @@ class RingBuffer {
         int32_t peek(void *ptr, uint16_t num);
         uint32_t size();
 
-	int32_t smart_pop(void *ptr);
-	int32_t smart_pop_nmea(void *ptr);
+        int32_t smart_pop(void *ptr);
+        int32_t smart_pop_nmea(void *ptr);
+        int32_t smart_pop_sip(void *ptr);
+        int32_t smart_pop_booms_cmd(void *ptr);
 
         void clear();
 };

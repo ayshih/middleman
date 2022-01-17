@@ -25,9 +25,9 @@ int main(int argc, char * argv[])
 
     int ch;
     while ((ch = fgetc(fp)) != EOF) {
-	uint8_t byte = ch;
-	if (byte == 0xac) printf("\n%ld:", ftell(fp));
-	printf("%02x ", byte);
+        uint8_t byte = ch;
+        if (byte == 0xac) printf("\n%ld:", ftell(fp));
+        printf("%02x ", byte);
         polled_write(fd, &serial_poll, &byte, 1);
     }
 
