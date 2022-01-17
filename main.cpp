@@ -1339,14 +1339,17 @@ void *ExternalPPSThread(void *threadargs)
                     RemoveISR_aDIO(aDIO_Device);
                     std::cerr << "ExternalPPS ERROR:  GetInterruptMode_aDIO() FAILED\n";
                 } else {
-                    // Set the PPS pulse width to 500 ms
                     struct pollfd serial_poll;
                     serial_poll.fd = device_fd[GPS_DEVICE];
                     serial_poll.events = POLLOUT;
 
-                    char command[32] = "$PTNLSPS,1,5000000,1,0*53\r\n";
+                    // Set the PPS pulse width to 500 ms
+                    char cmd_pps[32] = "$PTNLSPS,1,5000000,1,0*53\r\n";
+                    polled_write(serial_poll.fd, &serial_poll, cmd_pps, strlen(cmd_pps));
 
-                    polled_write(serial_poll.fd, &serial_poll, command, strlen(command));
+                    // Set the dynamics mode to "air"
+                    char cmd_dynamics[64] = "$PTNLSCR,0.60,5.00,12.00,6.00,0.0000020,0,3,1,1*71\r\n";
+                    polled_write(serial_poll.fd, &serial_poll, cmd_dynamics, strlen(cmd_dynamics));
 
                     while(!stop_message[tid])
                     {
@@ -1372,9 +1375,10 @@ void *ExternalPPSThread(void *threadargs)
                                     use_fake_pps = true;
                                 } else {
                                     printLogTimestamp();
-                                    std::cout << "ExternalPPS: reconfiguring the PPS pulse width\n";
+                                    std::cout << "ExternalPPS: reconfiguring the GPS device\n";
 
-                                    polled_write(serial_poll.fd, &serial_poll, command, strlen(command));
+                                    polled_write(serial_poll.fd, &serial_poll, cmd_pps, strlen(cmd_pps));
+                                    polled_write(serial_poll.fd, &serial_poll, cmd_dynamics, strlen(cmd_dynamics));
                                 }
                             }
                         }
