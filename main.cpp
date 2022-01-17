@@ -166,8 +166,9 @@ bool pps_received = false;
 bool use_fake_pps = false;
 void *ExternalPPSThread(void *threadargs);
 
-void writeCurrentUT(char *buffer);
+void generate_log_filename(char *buffer);
 void printLogTimestamp();
+uint64_t current_monotonic_time();
 
 template <class T>
 bool set_if_different(T& variable, T value); //returns true if the value is different
@@ -205,13 +206,18 @@ void sig_handler(int signum)
     }
 }
 
-void writeCurrentUT(char *buffer)
+void generate_log_filename(char *buffer)
 {
+    /*
     time_t now;
     time(&now);
     struct tm now_tm;
     gmtime_r(&now, &now_tm);
-    strftime(buffer, 14, "%y%m%d_%H%M%S", &now_tm);
+    strftime(buffer, 21, "tm_%y%m%d_%H%M%S.bin", &now_tm);
+    */
+
+    // Use monotonic time for the timestamp since we can't trust the system clock
+    sprintf(buffer, "tm_%012lx.bin", current_monotonic_time());
 }
 
 void printLogTimestamp()
@@ -323,16 +329,16 @@ void *TelemetrySenderThread(void *threadargs)
     long tid = (long)((struct Thread_data *)threadargs)->thread_id;
     printf("TelemetrySender thread #%ld!\n", tid);
 
-    char timestamp[14];
-    char filename[128];
+    char filename[50];
+    char fullpath[128];
     std::ofstream log;
 
     if (LOG_PACKETS) {
-        writeCurrentUT(timestamp);
-        sprintf(filename, "%s/tm_%s.bin", LOG_LOCATION, timestamp);
-        filename[128 - 1] = '\0';
-        printf("Creating telemetry log file %s\n",filename);
-        log.open(filename, std::ofstream::binary);
+        generate_log_filename(filename);
+        sprintf(fullpath, "%s/%s", LOG_LOCATION, filename);
+        fullpath[128 - 1] = '\0';
+        printf("Creating telemetry log file %s\n", fullpath);
+        log.open(fullpath, std::ofstream::binary);
     }
 
     TelemetrySender *telSender = new TelemetrySender(ip_tm, (unsigned short) PORT_TM);
@@ -346,6 +352,19 @@ void *TelemetrySenderThread(void *threadargs)
             TelemetrySender *old = telSender;
             telSender = new TelemetrySender(ip_tm, (unsigned short) PORT_TM);
             delete old;
+
+            // Open a new log file
+            if (LOG_PACKETS && log.is_open()) {
+                log.flush();
+                log.close();
+
+                generate_log_filename(filename);
+                sprintf(fullpath, "%s/%s", LOG_LOCATION, filename);
+                fullpath[128 - 1] = '\0';
+                printf("Creating telemetry log file %s\n", fullpath);
+                log.open(fullpath, std::ofstream::binary);
+            }
+
             SIGNAL_RESET_TELEMETRYSENDER = false;
         }
 
