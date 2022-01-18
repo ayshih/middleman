@@ -56,6 +56,8 @@
 #define KEY_NULL                 0x00
 
 //MM commands
+#define KEY_MANUAL_SBD_COMM1    0x10
+#define KEY_MANUAL_SBD_COMM2    0x11
 #define KEY_DESTINATION_IP      0xA1
 #define KEY_ENABLE_TM_FULL      0xA2
 #define KEY_DISABLE_TM_FULL     0xA3
@@ -146,6 +148,8 @@ void kill_all_workers(); //kills all threads except the one that listens for com
 void *TelemetrySenderThread(void *threadargs);
 void *TelemetryHousekeepingThread(void *threadargs);
 //void *TelemetryScienceThread(void *threadargs);
+
+void send_sbd_packet(uint8_t device_id);
 
 void *CommandListenerThread(void *threadargs);
 void cmd_process_command(CommandPacket &cp);
@@ -769,12 +773,28 @@ void *CommandHandlerThread(void *threadargs)
         case SYS_ID_MM:
             switch(my_data->command_key)
             {
+                case KEY_MANUAL_SBD_COMM1:
+                    if (system_id_to_device_id[SYS_ID_SIP] != 255) {
+                        send_sbd_packet(system_id_to_device_id[SYS_ID_SIP]);
+                        error_code = 0;
+                    } else {
+                        error_code = ACK_NOACTION;
+                    }
+                    break;
+                case KEY_MANUAL_SBD_COMM2:
+                    if (system_id_to_device_id[SYS_ID_SIP+1] != 255) {
+                        send_sbd_packet(system_id_to_device_id[SYS_ID_SIP+1]);
+                        error_code = 0;
+                    } else {
+                        error_code = ACK_NOACTION;
+                    }
+                    break;
                 case KEY_DESTINATION_IP:
                     // payload should be the four bytes of the IP
                     if (my_data->payload_size == 4) {
                         char new_ip_tm[16];
                         sprintf(new_ip_tm, "%d.%d.%d.%d", bytes[0], bytes[1], bytes[2], bytes[3]);
-                        std::cout << "Destination IP for telmetry will be changed from " << ip_tm << " to " << new_ip_tm << std::endl;
+                        std::cout << "Destination IP for telemetry will be changed from " << ip_tm << " to " << new_ip_tm << std::endl;
                         strcpy(ip_tm, new_ip_tm);
                         SIGNAL_RESET_TELEMETRYSENDER = true;
                         error_code = 0;
@@ -1258,13 +1278,33 @@ void *GPSParserThread(void *threadargs)
 }
 
 
-void assemble_sbd_packet(uint8_t *sbd_packet)
+void send_sbd_packet(uint8_t device_id)
 {
+    static uint64_t counter = 0;
+
+    uint8_t sbd_packet[259];
+
     sbd_packet[0] = 0x10;
     sbd_packet[1] = 0x53;
     sbd_packet[2] = 255;
-    for (int i=0; i<255; i++) sbd_packet[i+3] = i;
+
+    uint64_t now = current_monotonic_time();
+    memcpy(sbd_packet+3, (uint8_t *)(&now), 6);
+
+    for (int i=0; i<249; i++) sbd_packet[i+9] = (counter++ % 248);
+
     sbd_packet[258] = 0x03;
+
+    printf("Sending SBD packet to /dev/ttyS%d: ", device_id);
+    for (int i=0; i<259; i++) {
+        printf("0x%02X ", sbd_packet[i]);
+    }
+    printf("\n");
+
+    struct pollfd serial_poll;
+    serial_poll.fd = device_fd[device_id];
+    serial_poll.events = POLLOUT;
+    polled_write(serial_poll.fd, &serial_poll, sbd_packet, 259);
 }
 
 
@@ -1291,30 +1331,17 @@ void *SIPParserThread(void *threadargs)
             if(MODE_VERBOSE) {
                 printLogTimestamp();
                 printf("Parsed a SIP packet of %d bytes from device %d\n", packet_size, device_id);
-            printf("SIP packet: ");
-            for (int i=0; i<packet_size; i++) {
-                printf("0x%02X ", packet_buffer[i]);
-            }
-            printf("\n");
+                printf("SIP packet: ");
+                for (int i=0; i<packet_size; i++) {
+                    printf("0x%02X ", packet_buffer[i]);
+                }
+                printf("\n");
             }
 
             switch(packet_buffer[1]) {
                 case 0x13:
                     printf("SIP has requested science data\n");
-                    uint8_t sbd_packet[259];
-
-                    assemble_sbd_packet(sbd_packet);
-
-                    printf("Sending back: ");
-                    for (int i=0; i<259; i++) {
-                        printf("0x%02X ", sbd_packet[i]);
-                    }
-                    printf("\n");
-
-                    struct pollfd serial_poll;
-                    serial_poll.fd = device_fd[device_id];
-                    serial_poll.events = POLLOUT;
-                    polled_write(serial_poll.fd, &serial_poll, sbd_packet, 259);
+                    send_sbd_packet(device_id);
 
                     break;
                 case 0x14:
