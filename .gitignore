@@ -11,6 +11,8 @@ inspect
 log_telemetry
 quick
 playback
+playserial
+sim_spectrometer
 
 *.bin
 logs

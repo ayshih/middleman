@@ -28,6 +28,9 @@ clean:
 simulator: simulator.c serial.o
 	$(CC) -o $@ $^
 
+sim_spectrometer: sim_spectrometer.c serial.o
+	$(CC) -o $@ $^
+
 playserial: playserial.c serial.o
 	$(CC) -o $@ $^
 

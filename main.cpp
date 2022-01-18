@@ -50,6 +50,8 @@
 
 #define TM_EVENTGROUP   0xC0
 
+#define TM_MINORGROUP   0xD0
+
 //BOOMS commands, shared
 #define KEY_NULL                 0x00
 
@@ -1015,6 +1017,8 @@ void *SpectrometerParserThread(void *threadargs)
 
     char packet_buffer[1024];
 
+    TelemetryPacket tp_minorgroup(my_data->system_id, TM_MINORGROUP, 0, current_monotonic_time());  // TODO: needs counter
+
     while(!stop_message[tid])
     {
         int packet_size;
@@ -1030,6 +1034,14 @@ void *SpectrometerParserThread(void *threadargs)
                 printf("Parsed a spectrometer packet of %d bytes from device %d\n", packet_size, device_id);
             }
 
+            uint32_t minor_frame_counter = ((uint8_t)packet_buffer[3] << 16) | ((uint8_t)packet_buffer[4] << 8) | (uint8_t)packet_buffer[5];
+
+            tp_minorgroup.append_bytes(packet_buffer, packet_size);
+
+            if ((minor_frame_counter & 0b111) == 0) {
+                tm_packet_queue << tp_minorgroup;
+                tp_minorgroup = TelemetryPacket(my_data->system_id, TM_MINORGROUP, 0, current_monotonic_time());  // TODO: needs counter
+            }
         }
 
         usleep_force(USLEEP_SERIAL_PARSER);
