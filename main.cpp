@@ -101,6 +101,7 @@ uint8_t latest_system_id = 0xFF;
 uint8_t latest_command_key = 0xFF;
 float temp_py = 0, temp_roll = 0, temp_mb = 0;
 char ip_tm[20];
+uint8_t latest_housekeeping_packet[255];
 
 uint32_t evtm_bps_cap = DEFAULT_EVTM_BPS_CAP;
 
@@ -203,6 +204,8 @@ uint32_t imager_bytes[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 uint32_t imager_bad_bytes[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 
 uint32_t spectrometer_bad_bytes[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+
+uint32_t telemetry_bytes[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
 int device_fd[32];
 RingBuffer ring_buffer[32];
@@ -402,6 +405,10 @@ void *TelemetrySenderThread(void *threadargs)
         if( !tm_packet_queue.empty() ){
             TelemetryPacket tp(NULL);
             tm_packet_queue >> tp;
+
+            uint8_t system_id = tp.getSystemID();
+            telemetry_bytes[(system_id & 0xF0) >> 4] += tp.getLength();
+
             if(MODE_TM_FULL) ts_full->send( &tp );
             if(MODE_TM_LOS) {
                 // Keep a running total bytes sent over the past second
@@ -547,7 +554,18 @@ void *TelemetryHousekeepingThread(void *threadargs)
         fclose(fp);
         tphk << (uint32_t)uptime;
 
+
+        uint32_t local_telemetry_bytes[16];
+        memcpy(&local_telemetry_bytes, telemetry_bytes, sizeof(telemetry_bytes));
+        memset(&telemetry_bytes, 0, sizeof(telemetry_bytes));
+        tphk << (uint8_t)local_telemetry_bytes[SYS_ID_MM >> 4];
+        tphk << (uint8_t)local_telemetry_bytes[SYS_ID_GPS >> 4];
+        tphk << (uint32_t)local_telemetry_bytes[SYS_ID_IMG >> 4];
+        tphk << (uint16_t)local_telemetry_bytes[SYS_ID_NAI >> 4];
+
         tm_packet_queue << tphk;
+
+        tphk.outputTo(latest_housekeeping_packet);
     }
 
     printf("TelemetryHousekeeping thread #%ld exiting\n", tid);
@@ -1276,16 +1294,15 @@ void send_sbd_packet(uint8_t device_id)
     sbd_packet[1] = 0x53;
     sbd_packet[2] = 255;
 
-    uint64_t now = current_monotonic_time();
-    memcpy(sbd_packet+3, (uint8_t *)(&now), 6);
+    for (int i=0; i<255; i++) sbd_packet[i+3] = (counter++ % 254);
 
-    for (int i=0; i<249; i++) sbd_packet[i+9] = (counter++ % 248);
+    memcpy(sbd_packet+3, latest_housekeeping_packet, 34);
 
     sbd_packet[258] = 0x03;
 
     printf("Sending SBD packet to /dev/ttyS%d: ", device_id);
     for (int i=0; i<259; i++) {
-        printf("0x%02X ", sbd_packet[i]);
+        printf("%02X ", sbd_packet[i]);
     }
     printf("\n");
 
