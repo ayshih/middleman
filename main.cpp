@@ -104,6 +104,11 @@ char ip_tm[20];
 
 uint32_t evtm_bps_cap = DEFAULT_EVTM_BPS_CAP;
 
+// global flags
+bool obtaining_gps_fixes = false;
+bool capping_evtm = false;
+bool sending_sbd_packets = false;
+
 // global mode variables
 bool MODE_NETWORK = false;
 bool MODE_TIMING = false;
@@ -419,6 +424,7 @@ void *TelemetrySenderThread(void *threadargs)
                 } else {
                     dropped_packets++;
                     dropped_bytes += tp.getLength();
+                    capping_evtm = true;
                 }
             }
             if(MODE_NETWORK) std::cout << "TelemetrySender: " << tp.getLength() << " bytes, " << tp << std::endl;
@@ -454,7 +460,6 @@ void *TelemetryHousekeepingThread(void *threadargs)
 
     uint32_t tm_frame_sequence_number = 0;
 
-    /*
     FILE* fp = fopen("/proc/stat", "r");
     long user1, nice1, system1, idle1;
     fscanf(fp, "%*s %ld %ld %ld %ld", &user1, &nice1, &system1, &idle1);
@@ -462,8 +467,7 @@ void *TelemetryHousekeepingThread(void *threadargs)
 
     long user2, nice2, system2, idle2;
 
-    double free0, free1, free2, min_free = 0, min_free_previous = 0, days = -1;
-    */
+    double free;
 
     while(!stop_message[tid])
     {
@@ -505,64 +509,45 @@ void *TelemetryHousekeepingThread(void *threadargs)
         }
         tm_packet_queue << tp;
 
-        /*
-        TelemetryPacket tp(SYS_ID_ASP, TM_HOUSEKEEPING, tm_frame_sequence_number, oeb_get_clock());
+        TelemetryPacket tphk(SYS_ID_MM, TM_HOUSEKEEPING, tm_frame_sequence_number, current_monotonic_time());
 
         uint8_t status_bitfield = 0;
-        bitwrite(&status_bitfield, 0, 1, CAMERAS[0].Handle != NULL);
-        bitwrite(&status_bitfield, 1, 1, CAMERAS[1].Handle != NULL);
-        // bit 2 is connection to IR sensor
-        // bit 3 is TBD
-        bitwrite(&status_bitfield, 4, 1, CAMERAS[0].WantToSave);
-        bitwrite(&status_bitfield, 5, 1, CAMERAS[1].WantToSave);
-        bitwrite(&status_bitfield, 6, 1, MODE_DECIMATE);
-        bitwrite(&status_bitfield, 7, 1, MODE_POINTING);
-        tp << status_bitfield << latest_command_key;
+        bitwrite(&status_bitfield, 0, 1, obtaining_gps_fixes);
+        bitwrite(&status_bitfield, 1, 1, !use_fake_pps);
+        bitwrite(&status_bitfield, 4, 1, sending_sbd_packets);
+        bitwrite(&status_bitfield, 5, 1, MODE_TM_FULL);
+        bitwrite(&status_bitfield, 6, 1, MODE_TM_LOS);
+        bitwrite(&status_bitfield, 7, 1, capping_evtm);
+        obtaining_gps_fixes = false;
+        sending_sbd_packets = false;
+        capping_evtm = false;
 
-        // Temperatures
-        tp << (int16_t)(temp_py * 100) << (int16_t)(temp_roll * 100);
-        
-        // Estimate of days remaining of disk space
-        struct statvfs vfs;
-        statvfs("/data0", &vfs);
-        free0 = (double)vfs.f_bavail / vfs.f_blocks;
-        statvfs("/data1", &vfs);
-        free1 = (double)vfs.f_bavail / vfs.f_blocks;
-        statvfs("/data2", &vfs);
-        free2 = (double)vfs.f_bavail / vfs.f_blocks;
-        if ((tm_frame_sequence_number % 10) == 0) {
-            min_free_previous = min_free;
-            min_free = MIN(MIN(free0, free1), free2);
-            if (min_free_previous != 0) {
-                days = (10. * current_settings.cadence_housekeeping) / (min_free_previous - min_free) / 86400.;
-            }
-        }
-        tp << (int16_t)(days * 100);
+        tphk << status_bitfield << latest_command_key;
 
         // CPU usage
         fp = fopen("/proc/stat", "r");
         fscanf(fp, "%*s %ld %ld %ld %ld", &user2, &nice2, &system2, &idle2);
         fclose(fp);
-        tp << (uint16_t)(100 * 100 * (1 - (double)(idle2 - idle1) / (user2 + nice2 + system2 + idle2 - user1 - nice1 - system1 - idle1)));
+        tphk << (uint16_t)(100 * 100 * (1 - (double)(idle2 - idle1) / (user2 + nice2 + system2 + idle2 - user1 - nice1 - system1 - idle1)));
         user1 = user2;
         nice1 = nice2;
         system1 = system2;
         idle1 = idle2;
 
         // Disk usage
-        tp << (uint16_t)(100 * 100 * (1 - free0));
-        tp << (uint16_t)(100 * 100 * (1 - free1));
-        tp << (uint16_t)(100 * 100 * (1 - free2));
+        struct statvfs vfs;
+        statvfs("/", &vfs);
+        free = (double)vfs.f_bavail / vfs.f_blocks;
+        tphk << (uint16_t)(100 * 100 * (1 - free));
 
         // Uptime
         fp = fopen("/proc/uptime", "r");
         float uptime;
         fscanf(fp, "%f", &uptime);
         fclose(fp);
-        tp << (uint32_t)uptime;
+        tphk << (uint32_t)uptime;
 
-        tm_packet_queue << tp;
-        */
+        tm_packet_queue << tphk;
     }
 
     printf("TelemetryHousekeeping thread #%ld exiting\n", tid);
@@ -1203,6 +1188,7 @@ void *GPSParserThread(void *threadargs)
                 }
 
                 if ((quality != 0) && (frac_second == 0)) {
+                    obtaining_gps_fixes = true;
                     gps_fix_received = true;
                 }
             } else if (strncmp(packet_buffer, "$GPZDA", 6) == 0) {
@@ -1280,6 +1266,8 @@ void *GPSParserThread(void *threadargs)
 
 void send_sbd_packet(uint8_t device_id)
 {
+    sending_sbd_packets = true;
+
     static uint64_t counter = 0;
 
     uint8_t sbd_packet[259];
