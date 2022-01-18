@@ -165,6 +165,9 @@ struct gps_for_pps_struct{
     uint8_t second;
     uint32_t second_offset;
     uint8_t day_offset = 0;
+    uint8_t day_of_month; // starts at 1
+    uint8_t month; // starts at 1
+    uint16_t year; // 4-digit year
 };
 struct gps_for_pps_struct gps_for_pps;
 
@@ -173,6 +176,9 @@ void *InternalPPSThread(void *threadargs);
 void pps_handler(isr_info_t info);
 bool pps_received = false;
 bool use_fake_pps = false;
+bool gps_fix_received = false;
+bool gps_time_received = false;
+bool system_clock_synchronized = false;
 void *ExternalPPSThread(void *threadargs);
 
 void generate_log_filename(char *buffer);
@@ -219,8 +225,14 @@ void generate_log_filename(char *buffer)
     strftime(buffer, 21, "tm_%y%m%d_%H%M%S.bin", &now_tm);
     */
 
-    // Use monotonic time for the timestamp since we can't trust the system clock
-    sprintf(buffer, "tm_%012lx.bin", current_monotonic_time());
+    if (!gps_time_received) {
+        // Use monotonic time for the timestamp since we can't trust the system clock
+        sprintf(buffer, "tm_%012lx.bin", current_monotonic_time());
+    } else {
+        sprintf(buffer, "tm_%04d%02d%02d_%02d%02d%02d.bin",
+                gps_for_pps.year, gps_for_pps.month, gps_for_pps.day_of_month,
+                gps_for_pps.hour, gps_for_pps.minute, gps_for_pps.second);
+    }
 }
 
 void printLogTimestamp()
@@ -355,7 +367,7 @@ void *TelemetrySenderThread(void *threadargs)
         usleep_force(USLEEP_TM_SEND);
 
         if (SIGNAL_RESET_TELEMETRYSENDER) {
-            std::cout << "Reseting TelemetrySenders due to IP change\n";
+            std::cout << "Resetting TelemetrySenders\n";
             TelemetrySender *old_full = ts_full;
             TelemetrySender *old_los = ts_los;
             ts_full = new TelemetrySender(ip_tm, (unsigned short) PORT_TM);
@@ -1171,14 +1183,44 @@ void *GPSParserThread(void *threadargs)
                 }
 
                 if ((quality != 0) && (frac_second == 0)) {
-                    if (hour == 0 && gps_for_pps.hour == 23) {  // day rollover
+                    gps_fix_received = true;
+                }
+            } else if (strncmp(packet_buffer, "$GPZDA", 6) == 0) {
+                // GPS time & date packet
+                commastring_to_argv(packet_buffer, argv, 30);
+
+                if (gps_fix_received) {
+                    int8_t hour = -1, minute = -1, second = -1;
+                    std::string hms_s(argv[1]);
+                    if (hms_s.length() > 0) {
+                        hour = std::stoi(hms_s.substr(0, 2));
+                        minute = std::stoi(hms_s.substr(2, 2));
+                        second = std::stoi(hms_s.substr(4, 2));
+                    }
+
+                    int8_t day_of_month = -1, month = -1;
+                    int16_t year = -1;
+                    if (strlen(argv[2]) > 0) day_of_month = atoi(argv[2]);
+                    if (strlen(argv[3]) > 0) month = atoi(argv[3]);
+                    if (strlen(argv[4]) > 0) year = atoi(argv[4]);
+
+                    if (day_of_month != -1 && gps_for_pps.day_of_month != -1 && day_of_month != gps_for_pps.day_of_month) {  // day rollover
                         gps_for_pps.day_offset++;
                     }
                     gps_for_pps.hour = hour;
                     gps_for_pps.minute = minute;
                     gps_for_pps.second = second;
                     gps_for_pps.second_offset = 1;
+                    gps_for_pps.day_of_month = day_of_month;
+                    gps_for_pps.month = month;
+                    gps_for_pps.year = year;
+
+                    if (!gps_time_received && hour != -1) {
+                        gps_time_received = true;
+                        SIGNAL_RESET_TELEMETRYSENDER = true;
+                    }
                 }
+
             } else if (strncmp(packet_buffer, "$GPVTG", 6) == 0) {
                 // GPS velocity packet
                 commastring_to_argv(packet_buffer, argv, 30);
@@ -1385,7 +1427,7 @@ void pps_handler(isr_info_t info)
     uint8_t hour = 0, minute = 0, second = 0;
     int32_t clock_difference = -1000000;
 
-    if (gps_for_pps.hour != 255) {  // we've received at least one GPS position packet
+    if (gps_time_received) {  // we've received at least one GPS position packet with time
         struct timespec now;
         struct tm now_tm, pps_tm, temp_tm;
 
@@ -1441,6 +1483,28 @@ void pps_handler(isr_info_t info)
 }
 
 
+void configure_gps_device()
+{
+    uint8_t gps_device = system_id_to_device_id[SYS_ID_GPS];
+
+    struct pollfd serial_poll;
+    serial_poll.fd = device_fd[gps_device];
+    serial_poll.events = POLLOUT;
+
+    // Set the PPS pulse width to 500 ms
+    char cmd_pps[32] = "$PTNLSPS,1,5000000,1,0*53\r\n";
+    polled_write(serial_poll.fd, &serial_poll, cmd_pps, strlen(cmd_pps));
+
+    // Set the dynamics mode to "air"
+    char cmd_dynamics[64] = "$PTNLSCR,0.60,5.00,12.00,6.00,0.0000020,0,3,1,1*71\r\n";
+    polled_write(serial_poll.fd, &serial_poll, cmd_dynamics, strlen(cmd_dynamics));
+
+    // Set the NMEA packet output to GPGGA+GPVTG+GPZDA
+    char cmd_output[23] = "$PTNLSNM,0025,01*50\r\n";
+    polled_write(serial_poll.fd, &serial_poll, cmd_output, strlen(cmd_output));
+}
+
+
 void *ExternalPPSThread(void *threadargs)
 {
     Thread_data *my_data = (Thread_data *) threadargs;
@@ -1453,8 +1517,6 @@ void *ExternalPPSThread(void *threadargs)
     uint8_t IntMode;
 
     uint32_t ticks = 0;
-
-    uint8_t gps_device = system_id_to_device_id[SYS_ID_GPS];
 
     // Open aDIO device
     aDIO_ReturnVal = OpenDIO_aDIO(&aDIO_Device, 0);
@@ -1484,17 +1546,7 @@ void *ExternalPPSThread(void *threadargs)
                     RemoveISR_aDIO(aDIO_Device);
                     std::cerr << "ExternalPPS ERROR:  GetInterruptMode_aDIO() FAILED\n";
                 } else {
-                    struct pollfd serial_poll;
-                    serial_poll.fd = device_fd[gps_device];
-                    serial_poll.events = POLLOUT;
-
-                    // Set the PPS pulse width to 500 ms
-                    char cmd_pps[32] = "$PTNLSPS,1,5000000,1,0*53\r\n";
-                    polled_write(serial_poll.fd, &serial_poll, cmd_pps, strlen(cmd_pps));
-
-                    // Set the dynamics mode to "air"
-                    char cmd_dynamics[64] = "$PTNLSCR,0.60,5.00,12.00,6.00,0.0000020,0,3,1,1*71\r\n";
-                    polled_write(serial_poll.fd, &serial_poll, cmd_dynamics, strlen(cmd_dynamics));
+                    configure_gps_device();
 
                     while(!stop_message[tid])
                     {
@@ -1522,8 +1574,7 @@ void *ExternalPPSThread(void *threadargs)
                                     printLogTimestamp();
                                     std::cout << "ExternalPPS: reconfiguring the GPS device\n";
 
-                                    polled_write(serial_poll.fd, &serial_poll, cmd_pps, strlen(cmd_pps));
-                                    polled_write(serial_poll.fd, &serial_poll, cmd_dynamics, strlen(cmd_dynamics));
+                                    configure_gps_device();
                                 }
                             }
                         }
