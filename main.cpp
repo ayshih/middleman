@@ -1,3 +1,5 @@
+#define DEFAULT_EVTM_BPS_CAP 5000000
+
 #define MAX_THREADS 50
 
 #define LOG_PACKETS true
@@ -13,13 +15,14 @@
 #define USLEEP_ADIO              10000 // wait time for aDIO operations
 
 //IP addresses
-#define IP_GROUND "192.168.2.100"
+#define IP_GROUND "192.168.2.200"
 #define IP_LOOPBACK "127.0.0.1"
 #define IP_TM IP_GROUND //default IP address unless overridden on the command line
 
-//UDP ports, aside from PORT_IMAGE, which is TCP
-#define PORT_CMD      50501 // commands, FC (receive)
-#define PORT_TM       60501 // send telemetry to FC
+//UDP ports
+#define PORT_CMD      50501 // receive commands (receive)
+#define PORT_TM       60501 // send telemetry to ground network
+#define PORT_EVTM     20501 // send telemetry via EVTM
 
 //Acknowledgement error codes
 #define ACK_NOERROR 0x00
@@ -30,7 +33,6 @@
 #define ACK_BADVALUE 0x11
 
 //BOOMS system ID
-#define SYS_ID_FC  0x00
 #define SYS_ID_SIP 0x10
 #define SYS_ID_GPS 0x60
 #define SYS_ID_MM  0xA0
@@ -53,6 +55,9 @@
 
 //MM commands
 #define KEY_DESTINATION_IP      0xA1
+#define KEY_ENABLE_TM_FULL      0xA2
+#define KEY_DISABLE_TM_FULL     0xA3
+#define KEY_SET_EVTM_CAP        0xA4
 #define KEY_RESTART_WORKERS     0xF0
 #define KEY_RESTART_ALL         0xF1
 #define KEY_EXIT                0xF2
@@ -93,11 +98,15 @@ uint8_t latest_command_key = 0xFF;
 float temp_py = 0, temp_roll = 0, temp_mb = 0;
 char ip_tm[20];
 
+uint32_t evtm_bps_cap = DEFAULT_EVTM_BPS_CAP;
+
 // global mode variables
 bool MODE_NETWORK = false;
 bool MODE_TIMING = false;
 bool MODE_VERBOSE = false;
 bool MODE_SIMULATED_DATA = false;
+bool MODE_TM_FULL = true;
+bool MODE_TM_LOS = true;
 
 // interthread signals
 bool SIGNAL_RESET_TELEMETRYSENDER = false;
@@ -333,17 +342,24 @@ void *TelemetrySenderThread(void *threadargs)
         log.open(fullpath, std::ofstream::binary);
     }
 
-    TelemetrySender *telSender = new TelemetrySender(ip_tm, (unsigned short) PORT_TM);
+    TelemetrySender *ts_full = new TelemetrySender(ip_tm, (unsigned short) PORT_TM);
+    TelemetrySender *ts_los = new TelemetrySender(ip_tm, (unsigned short) PORT_EVTM);
+
+    uint64_t last_time = current_monotonic_time();
+    uint32_t total_bytes = 0, dropped_bytes = 0, dropped_packets = 0;
 
     while(!stop_message[tid])
     {
         usleep_force(USLEEP_TM_SEND);
 
         if (SIGNAL_RESET_TELEMETRYSENDER) {
-            std::cout << "Reseting TelemetrySender due to IP change\n";
-            TelemetrySender *old = telSender;
-            telSender = new TelemetrySender(ip_tm, (unsigned short) PORT_TM);
-            delete old;
+            std::cout << "Reseting TelemetrySenders due to IP change\n";
+            TelemetrySender *old_full = ts_full;
+            TelemetrySender *old_los = ts_los;
+            ts_full = new TelemetrySender(ip_tm, (unsigned short) PORT_TM);
+            ts_los = new TelemetrySender(ip_tm, (unsigned short) PORT_EVTM);
+            delete old_full;
+            delete old_los;
 
             // Open a new log file
             if (LOG_PACKETS && log.is_open()) {
@@ -363,7 +379,30 @@ void *TelemetrySenderThread(void *threadargs)
         if( !tm_packet_queue.empty() ){
             TelemetryPacket tp(NULL);
             tm_packet_queue >> tp;
-            telSender->send( &tp );
+            if(MODE_TM_FULL) ts_full->send( &tp );
+            if(MODE_TM_LOS) {
+                // Keep a running total bytes sent over the past second
+                uint64_t now_time = current_monotonic_time();
+                if (now_time - last_time > 10000000) {
+                    if (dropped_packets > 0) {
+                        fprintf(stderr, "TelemetrySender: Discarded %d packets (%d bytes) to comply with %d bps rate limit\n", dropped_packets, dropped_bytes, evtm_bps_cap);
+                    }
+
+                    total_bytes = 0;
+                    dropped_packets = 0;
+                    dropped_bytes = 0;
+                    last_time = now_time;
+                }
+                total_bytes += tp.getLength();
+
+                // If under the cap, proceed with sending
+                if (8*total_bytes < evtm_bps_cap) {
+                    ts_los->send( &tp );
+                } else {
+                    dropped_packets++;
+                    dropped_bytes += tp.getLength();
+                }
+            }
             if(MODE_NETWORK) std::cout << "TelemetrySender: " << tp.getLength() << " bytes, " << tp << std::endl;
 
             if (LOG_PACKETS && log.is_open()) {
@@ -382,7 +421,8 @@ void *TelemetrySenderThread(void *threadargs)
 
     printf("TelemetrySender thread #%ld exiting\n", tid);
 
-    delete telSender;
+    delete ts_full;
+    delete ts_los;
     if (LOG_PACKETS && log.is_open()) log.close();
 
     started[tid] = false;
@@ -707,7 +747,7 @@ void *CommandHandlerThread(void *threadargs)
     uint64_t response = 0;
     my_data = (struct Thread_data *) threadargs;
 
-    //uint64_t value = *(uint64_t *)(my_data->payload);
+    uint64_t value = *(uint64_t *)(my_data->payload);
     uint8_t *bytes = (uint8_t *)(my_data->payload);
 
     switch(my_data->system_id)
@@ -724,6 +764,37 @@ void *CommandHandlerThread(void *threadargs)
                         strcpy(ip_tm, new_ip_tm);
                         SIGNAL_RESET_TELEMETRYSENDER = true;
                         error_code = 0;
+                    } else {
+                        error_code = ACK_BADVALUE;
+                    }
+                    break;
+                case KEY_ENABLE_TM_FULL:
+                    if(!MODE_TM_FULL) {
+                        std::cout << "Turning ON full telemetry on port " << PORT_TM << std::endl;
+                        MODE_TM_FULL = true;
+                        error_code = 0;
+                    } else {
+                        error_code = ACK_NOACTION;
+                    }
+                    break;
+                case KEY_DISABLE_TM_FULL:
+                    if(MODE_TM_FULL) {
+                        std::cout << "Turning OFF full telemetry on port " << PORT_TM << std::endl;
+                        MODE_TM_FULL = false;
+                        error_code = 0;
+                    } else {
+                        error_code = ACK_NOACTION;
+                    }
+                    break;
+                case KEY_SET_EVTM_CAP:
+                    value &= 0xFFFFFFFF;
+                    if(value > 0) {
+                        if(set_if_different(evtm_bps_cap, (uint32_t)value)) {
+                            std::cout << "Setting EVTM bps cap to " << evtm_bps_cap << std::endl;
+                            error_code = 0;
+                        } else {
+                            error_code = ACK_NOACTION;
+                        }
                     } else {
                         error_code = ACK_BADVALUE;
                     }
