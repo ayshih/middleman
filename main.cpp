@@ -202,9 +202,9 @@ uint32_t spectrometer_bad_bytes[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 int device_fd[32];
 RingBuffer ring_buffer[32];
 
-uint8_t device_id_to_system_id[20] = {SYS_ID_GPS, SYS_ID_SIP, 255, 255,
-                                      SYS_ID_IMG, SYS_ID_IMG+1, SYS_ID_IMG+2, SYS_ID_IMG+3,
-                                      SYS_ID_IMG+4, SYS_ID_IMG+5, SYS_ID_IMG+6, SYS_ID_IMG+7,
+uint8_t device_id_to_system_id[20] = {SYS_ID_GPS, 255, 255, 255,
+                                      SYS_ID_IMG, SYS_ID_IMG+1, SYS_ID_NAI, SYS_ID_NAI+1,
+                                      SYS_ID_SIP, SYS_ID_SIP+1, 255, 255,
                                       255, 255, 255, 255,
                                       255, 255, 255, 255};
 uint8_t system_id_to_device_id[256]; // populated in main()
