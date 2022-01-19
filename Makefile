@@ -31,6 +31,9 @@ simulator: simulator.c serial.o
 sim_spectrometer: sim_spectrometer.c serial.o
 	$(CC) -o $@ $^
 
+fake_sip: fake_sip.c serial.o
+	$(CC) -o $@ $^
+
 playserial: playserial.c serial.o
 	$(CC) -o $@ $^
 

@@ -7,6 +7,8 @@ The network code re-uses the GRIPS network code: https://github.com/GRIPS/networ
 ## Executables
 * `main`: The main executable program.
 * `simulator`: Simulates the serial packets from one of the imagers using a user-specified event rate.
+* `sim_spectrometer`: Simulates the serial packets from one of the spectrometers using a user-specified cadence of minor frames.
+* `fake_sip`: Send SIP request-science-data packets on a serial port.
 * `listen_pps`: Listens on the CTS serial pin of the user-specified device for the PPS signal.
 * `checker`: Checks the stream of serial packets from `simulator`. 
 * `route_telemetry`: Tells the Interface Computer (specified by IP) the IP of the flight computer.
