@@ -237,11 +237,31 @@ void generate_log_filename(char *buffer)
     strftime(buffer, 21, "tm_%y%m%d_%H%M%S.bin", &now_tm);
     */
 
+    char fullpath[128];
+
+    sprintf(fullpath, "%s/%s", LOG_LOCATION, "last_log_number");
+    fullpath[128 - 1] = '\0';
+
+    int log_number = 0;
+
+    FILE* fp = fopen(fullpath, "r");
+    if (fp != NULL) {
+        fscanf(fp, "%d", &log_number);
+        fclose(fp);
+    }
+
+    log_number++;
+
+    fp = fopen(fullpath, "w");
+    if (fp != NULL) {
+        fprintf(fp, "%d\n", log_number);
+        fclose(fp);
+    }
+
     if (!gps_time_received) {
-        // Use monotonic time for the timestamp since we can't trust the system clock
-        sprintf(buffer, "tm_%012lx.bin", current_monotonic_time());
+        sprintf(buffer, "tm_%04d_XXXXXXXX_XXXXXX.bin", log_number);
     } else {
-        sprintf(buffer, "tm_%04d%02d%02d_%02d%02d%02d.bin",
+        sprintf(buffer, "tm_%04d_%04d%02d%02d_%02d%02d%02d.bin", log_number,
                 gps_for_pps.year, gps_for_pps.month, gps_for_pps.day_of_month,
                 gps_for_pps.hour, gps_for_pps.minute, gps_for_pps.second);
     }
