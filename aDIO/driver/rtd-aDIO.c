@@ -33,6 +33,7 @@
 #include <linux/errno.h>
 #include <linux/types.h>
 #include <linux/sched.h>
+#include <linux/sched/signal.h>
 #include <linux/ioport.h>
 #include <linux/time.h>
 #include <linux/poll.h>
