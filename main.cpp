@@ -175,7 +175,7 @@ struct gps_for_pps_struct{
     uint8_t second;
     uint32_t second_offset;
     uint8_t day_offset = 0;
-    uint8_t day_of_month; // starts at 1
+    uint8_t day_of_month = 255; // starts at 1
     uint8_t month; // starts at 1
     uint16_t year; // 4-digit year
 };
@@ -1248,7 +1248,7 @@ void *GPSParserThread(void *threadargs)
                     if (strlen(argv[3]) > 0) month = atoi(argv[3]);
                     if (strlen(argv[4]) > 0) year = atoi(argv[4]);
 
-                    if (day_of_month != -1 && gps_for_pps.day_of_month != -1 && day_of_month != gps_for_pps.day_of_month) {  // day rollover
+                    if (day_of_month != -1 && gps_for_pps.day_of_month != 255 && day_of_month != gps_for_pps.day_of_month) {  // day rollover
                         gps_for_pps.day_offset++;
                     }
                     gps_for_pps.hour = hour;

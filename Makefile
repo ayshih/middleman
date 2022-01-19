@@ -1,6 +1,6 @@
 
 CC = g++
-EXEC = simulator checker main listen_pps route_telemetry turn_off inspect log_telemetry quick playback
+EXEC = simulator checker main driver listen_pps route_telemetry turn_off inspect log_telemetry quick playback sim_spectrometer fake_sip
 
 CXXFLAGS = -Inetwork -IaDIO/include -Wall -pthread
 

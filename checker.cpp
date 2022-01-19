@@ -25,7 +25,7 @@ int main(int argc, char * argv[])
         ring_buffer.append(buffer1, c);
 
         int packet_size;
-        while((packet_size = ring_buffer.smart_pop(buffer2)) != 0) {
+        while((packet_size = ring_buffer.smart_pop_imager(buffer2)) != 0) {
             if(packet_size == -1) {
                 fprintf(stderr, "Skipping a byte\n");
                 continue;
