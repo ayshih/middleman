@@ -16,8 +16,9 @@
 
 //IP addresses
 #define IP_GROUND "192.168.2.200"
+#define IP_MC_LOS "239.255.0.1"
 #define IP_LOOPBACK "127.0.0.1"
-#define IP_TM IP_GROUND //default IP address unless overridden on the command line
+#define IP_TM IP_MC_LOS //default IP address unless overridden on the command line
 
 //UDP ports
 #define PORT_CMD      50501 // receive commands (receive)
