@@ -106,6 +106,9 @@ uint8_t latest_command_key = 0xFF;
 float temp_py = 0, temp_roll = 0, temp_mb = 0;
 char ip_tm[20];
 uint8_t latest_housekeeping_packet[255];
+uint8_t latest_magnetometer_packet[18];
+uint8_t latest_imager_housekeeping[160];
+uint8_t latest_spectrometer_housekeeping[80];
 
 uint32_t evtm_bps_cap = DEFAULT_EVTM_BPS_CAP;
 
@@ -1079,6 +1082,7 @@ void *MagnetometerParserThread(void *threadargs)
 
             if(counter == 4) {
                 tm_packet_queue << tp_maggroup;
+                memcpy(latest_magnetometer_packet, packet_buffer, 18);
                 counter = 0;
             }
         }
@@ -1101,6 +1105,7 @@ void *ImagerParserThread(void *threadargs)
     printf("ImagerParser thread #%d [system 0x%02X]\n", tid, my_data->system_id);
 
     char packet_buffer[1024];
+    uint8_t housekeeping[20];
 
     TelemetryPacket tp_eventgroup(my_data->system_id, TM_EVENTGROUP, 0, current_monotonic_time());  // TODO: needs counter
     int events_in_group = 0;
@@ -1149,6 +1154,10 @@ void *ImagerParserThread(void *threadargs)
                 TelemetryPacket tp_hk(my_data->system_id, packet_type + 8, 0, current_monotonic_time());  // TODO: needs counter
                 tp_hk.append_bytes(packet_buffer, packet_size);
                 tm_packet_queue << tp_hk;
+
+                housekeeping[0] = my_data->system_id;
+                memcpy(latest_imager_housekeeping + 20 * (my_data->system_id & 0b111), housekeeping, 20);
+                memset(housekeeping, 0, 20);
             } else {
                 fprintf(stderr, "Unknown imager packet of type 0b%d%d%d\n", packet_type & 0b100 >> 2, packet_type & 0b010 >> 1, packet_type & 0b001);
                 imager_bad_bytes[my_data->system_id & 0b111] += packet_size;
@@ -1182,6 +1191,7 @@ void *SpectrometerParserThread(void *threadargs)
     printf("SpectrometerParser thread #%d [system 0x%02X]\n", tid, my_data->system_id);
 
     char packet_buffer[1024];
+    uint8_t housekeeping[20];
 
     TelemetryPacket tp_minorgroup(my_data->system_id, TM_MINORGROUP, 0, current_monotonic_time());  // TODO: needs counter
 
@@ -1209,6 +1219,16 @@ void *SpectrometerParserThread(void *threadargs)
                 tm_packet_queue << tp_minorgroup;
                 tp_minorgroup = TelemetryPacket(my_data->system_id, TM_MINORGROUP, 0, current_monotonic_time());  // TODO: needs counter
             }
+
+            // Housekeeping
+            switch (minor_frame_counter & 0b11111) {
+                case 7:
+                    housekeeping[0] = my_data->system_id;
+                    memcpy(latest_spectrometer_housekeeping + 20 * (my_data->system_id & 0b11), housekeeping, 20);
+                    memset(housekeeping, 0, 20);
+                    break;
+            }
+
         }
 
         usleep_force(USLEEP_SERIAL_PARSER);
@@ -1429,6 +1449,15 @@ void send_sbd_packet(uint8_t device_id)
     for (int i=0; i<255; i++) sbd_packet[i+3] = (counter++ % 254);
 
     memcpy(sbd_packet+3, latest_housekeeping_packet, 39);
+
+    memcpy(sbd_packet+3+40, latest_imager_housekeeping, 140);  // 7 imagers
+    //memset(latest_imager_housekeeping, 0, 160);
+
+    memcpy(sbd_packet+3+180, latest_spectrometer_housekeeping, 60);  // 3 spectrometer pairs
+    //memset(latest_spectrometer_housekeeping, 0, 80);
+
+    memcpy(sbd_packet+3+240, latest_magnetometer_packet+2, 15);
+    //memset(latest_magnetometer_packet, 0, 18);
 
     sbd_packet[258] = 0x03;
 
