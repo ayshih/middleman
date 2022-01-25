@@ -13,6 +13,7 @@
 #define USLEEP_MAIN               5000 // period for checking for new commands in the queue
 #define USLEEP_SERIAL_PARSER     10000 // wait time for polling a ring buffer
 #define USLEEP_ADIO              10000 // wait time for aDIO operations
+#define USLEEP_MAGNETOMETER     250000 // wait time for magnetometer readings
 
 //IP addresses
 #define IP_GROUND "192.168.2.200"
@@ -37,7 +38,7 @@
 #define SYS_ID_SIP 0x10
 #define SYS_ID_GPS 0x60
 #define SYS_ID_MM  0xA0
-#define SYS_ID_BGO 0xB0
+#define SYS_ID_MAG 0xB0
 #define SYS_ID_IMG 0xC0
 #define SYS_ID_NAI 0xD0
 
@@ -48,6 +49,8 @@
 #define TM_GPS_PPS      0x60
 #define TM_GPS_POSITION 0x61
 #define TM_GPS_VELOCITY 0x62
+
+#define TM_MAGGROUP     0xB0
 
 #define TM_EVENTGROUP   0xC0
 
@@ -211,7 +214,7 @@ uint32_t telemetry_bytes[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 int device_fd[32];
 RingBuffer ring_buffer[32];
 
-uint8_t device_id_to_system_id[20] = {SYS_ID_GPS, 255, 255, 255,
+uint8_t device_id_to_system_id[20] = {SYS_ID_GPS, SYS_ID_MAG, 255, 255,
                                       SYS_ID_IMG,   SYS_ID_IMG+1, SYS_ID_NAI,   SYS_ID_NAI+1,
                                       SYS_ID_SIP,   255,          SYS_ID_IMG+2, SYS_ID_IMG+3,
                                       SYS_ID_IMG+4, SYS_ID_IMG+5, SYS_ID_NAI+2, SYS_ID_NAI+3,
@@ -583,6 +586,7 @@ void *TelemetryHousekeepingThread(void *threadargs)
         tphk << (uint8_t)local_telemetry_bytes[SYS_ID_GPS >> 4];
         tphk << (uint32_t)local_telemetry_bytes[SYS_ID_IMG >> 4];
         tphk << (uint16_t)local_telemetry_bytes[SYS_ID_NAI >> 4];
+        tphk << (uint8_t)local_telemetry_bytes[SYS_ID_MAG >> 4];
 
         tm_packet_queue << tphk;
 
@@ -862,7 +866,7 @@ void *CommandHandlerThread(void *threadargs)
                     response = my_data->command_key;
             } //switch for command key
             break;
-        case SYS_ID_BGO:
+        case SYS_ID_MAG:
             switch(my_data->command_key & 0xF)
             {
                 default:
@@ -919,6 +923,7 @@ void *CommandHandlerThread(void *threadargs)
     pthread_exit(NULL);
 }
 
+
 void *SerialListenerThread(void *threadargs)
 {
     Thread_data *my_data = (Thread_data *) threadargs;
@@ -939,6 +944,9 @@ void *SerialListenerThread(void *threadargs)
             break;
         case SYS_ID_GPS:
             device_fd[device_id] = setup_serial_port(device_id, B4800);  // TODO: close this
+            break;
+        case SYS_ID_MAG:
+            device_fd[device_id] = setup_serial_port(device_id, B9600);  // TODO: close this
             break;
         case SYS_ID_IMG:
             device_fd[device_id] = setup_serial_port(device_id, B230400);  // TODO: close this
@@ -977,6 +985,74 @@ void *SerialListenerThread(void *threadargs)
     }
 
     printf("SerialListener thread #%d [device %d] exiting\n", tid, device_id);
+    started[tid] = false;
+    pthread_exit( NULL );
+}
+
+
+void *MagnetometerCommanderThread(void *threadargs)
+{
+    Thread_data *my_data = (Thread_data *) threadargs;
+    int tid = my_data->thread_id;
+    uint8_t device_id = system_id_to_device_id[my_data->system_id];
+
+    printf("MagnetometerCommander thread #%d [system 0x%02X]\n", tid, my_data->system_id);
+
+    uint8_t mag_device = system_id_to_device_id[SYS_ID_MAG];
+
+    struct pollfd serial_poll;
+    serial_poll.fd = device_fd[mag_device];
+    serial_poll.events = POLLOUT;
+
+    while(!stop_message[tid])
+    {
+        // Request magnetometer information
+        polled_write(serial_poll.fd, &serial_poll, "\xBF", 1);
+        usleep_force(USLEEP_MAGNETOMETER);
+    }
+
+    printf("MagnetometerCommander thread #%d [device %d] exiting\n", tid, device_id);
+    started[tid] = false;
+    pthread_exit( NULL );
+}
+
+
+void *MagnetometerParserThread(void *threadargs)
+{
+    Thread_data *my_data = (Thread_data *) threadargs;
+    int tid = my_data->thread_id;
+    uint8_t device_id = system_id_to_device_id[my_data->system_id];
+
+    printf("MagnetometerParser thread #%d [system 0x%02X]\n", tid, my_data->system_id);
+
+    char packet_buffer[18];
+
+    TelemetryPacket tp_maggroup(NULL);
+    int counter = 0;
+
+    while(!stop_message[tid])
+    {
+        while(ring_buffer[device_id].size() >= 18) {
+            if(counter == 0) {
+                tp_maggroup = TelemetryPacket(my_data->system_id, TM_MAGGROUP, 0, current_monotonic_time());  // TODO: needs counter
+            }
+
+            ring_buffer[device_id].pop(packet_buffer, 18);
+            //for(int i=0; i<18; i++) printf("%02X ", (uint8_t)packet_buffer[i]);
+            //printf("\n");
+            counter++;
+            tp_maggroup.append_bytes(packet_buffer, 18);
+
+            if(counter == 4) {
+                tm_packet_queue << tp_maggroup;
+                counter = 0;
+            }
+        }
+
+        usleep_force(USLEEP_SERIAL_PARSER);
+    }
+
+    printf("MagnetometerParser thread #%d [device %d] exiting\n", tid, device_id);
     started[tid] = false;
     pthread_exit( NULL );
 }
@@ -1752,6 +1828,10 @@ void start_all_workers()
                     break;
                 case SYS_ID_GPS:
                     start_thread(GPSParserThread, &tdata);
+                    break;
+                case SYS_ID_MAG:
+                    start_thread(MagnetometerCommanderThread, &tdata);
+                    start_thread(MagnetometerParserThread, &tdata);
                     break;
                 case SYS_ID_IMG:
                     start_thread(ImagerParserThread, &tdata);
