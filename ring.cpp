@@ -100,7 +100,7 @@ int32_t RingBuffer::smart_pop_spectrometer(void *ptr)
     uint8_t byte2 = this->buffer[(this->read_index + 1) % BUFFER_SIZE];
 
     if((byte1 == 0xEB) && (byte2 == 0x90)) {
-        uint8_t packet_size = 52;
+        uint8_t packet_size = 212;
         if(this_size < packet_size) return 0;
         return pop(ptr, packet_size);
     }

@@ -952,7 +952,7 @@ void *SerialListenerThread(void *threadargs)
             device_fd[device_id] = setup_serial_port(device_id, B230400);  // TODO: close this
             break;
         case SYS_ID_NAI:
-            device_fd[device_id] = setup_serial_port(device_id, B19200);  // TODO: close this
+            device_fd[device_id] = setup_serial_port(device_id, B38400);  // TODO: close this
             break;
         default:
             std::cerr << "Invalid system ID for serial listening\n";
@@ -1170,7 +1170,8 @@ void *SpectrometerParserThread(void *threadargs)
 
             tp_minorgroup.append_bytes(packet_buffer, packet_size);
 
-            if ((minor_frame_counter & 0b111) == 0) {
+            // Group every four spectrometer packets
+            if ((minor_frame_counter & 0b11) == 3) {
                 tm_packet_queue << tp_minorgroup;
                 tp_minorgroup = TelemetryPacket(my_data->system_id, TM_MINORGROUP, 0, current_monotonic_time());  // TODO: needs counter
             }

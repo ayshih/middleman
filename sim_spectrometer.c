@@ -14,10 +14,10 @@ int main(int argc, char * argv[])
         return -1;
     }
 
-    int fd = setup_serial_port(atoi(argv[1]), B19200);
+    int fd = setup_serial_port(atoi(argv[1]), B38400);
     int events_per_sec = atoi(argv[2]);
 
-    char buffer[52];
+    char buffer[212];
 
     char spinner[] = "|/-\\";
     setbuf(stdout, NULL);
@@ -29,7 +29,7 @@ int main(int argc, char * argv[])
 
     uint32_t count = 12345678;
     while(1) {
-        memset(buffer, 0, 52);
+        memset(buffer, 0, 212);
 
         buffer[0] = 0xEB;
         buffer[1] = 0x90;
@@ -39,8 +39,8 @@ int main(int argc, char * argv[])
         buffer[4] = *(count_as_bytes + 1);
         buffer[5] = *(count_as_bytes);
 
-        ssize_t c = polled_write(fd, &serial_poll, buffer, 52);
-        if(c != 52) perror("uh oh");
+        ssize_t c = polled_write(fd, &serial_poll, buffer, 212);
+        if(c != 212) perror("uh oh");
 
         count++;
 
