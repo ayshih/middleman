@@ -115,7 +115,7 @@ bool MODE_NETWORK = false;
 bool MODE_TIMING = false;
 bool MODE_VERBOSE = false;
 bool MODE_SIMULATED_DATA = false;
-bool MODE_TM_FULL = true;
+bool MODE_TM_FULL = false;
 bool MODE_TM_LOS = true;
 
 // interthread signals
