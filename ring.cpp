@@ -64,7 +64,7 @@ int32_t RingBuffer::smart_pop_imager(void *ptr)
 
     uint32_t this_size = (BUFFER_SIZE + this_write_index - this->read_index) % BUFFER_SIZE;
 
-    if(this_size == 0) return 0;
+    if(this_size < 2) return 0;
 
     //printf("R/W: %d %d\n", this->read_index, this_write_index);
 
@@ -92,7 +92,7 @@ int32_t RingBuffer::smart_pop_spectrometer(void *ptr)
 
     uint32_t this_size = (BUFFER_SIZE + this_write_index - this->read_index) % BUFFER_SIZE;
 
-    if(this_size == 0) return 0;
+    if(this_size < 2) return 0;
 
     //printf("R/W: %d %d\n", this->read_index, this_write_index);
 
@@ -117,7 +117,7 @@ int32_t RingBuffer::smart_pop_nmea(void *ptr)
 
     uint32_t this_size = (BUFFER_SIZE + this_write_index - this->read_index) % BUFFER_SIZE;
 
-    if(this_size == 0) return 0;
+    if(this_size < 1) return 0;
 
     uint8_t new_buffer[BUFFER_SIZE];
     peek(new_buffer, this_size);
