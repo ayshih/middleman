@@ -578,7 +578,6 @@ void *TelemetryHousekeepingThread(void *threadargs)
         fclose(fp);
         tphk << (uint32_t)uptime;
 
-
         uint32_t local_telemetry_bytes[16];
         memcpy(&local_telemetry_bytes, telemetry_bytes, sizeof(telemetry_bytes));
         memset(&telemetry_bytes, 0, sizeof(telemetry_bytes));
@@ -587,6 +586,41 @@ void *TelemetryHousekeepingThread(void *threadargs)
         tphk << (uint32_t)local_telemetry_bytes[SYS_ID_IMG >> 4];
         tphk << (uint16_t)local_telemetry_bytes[SYS_ID_NAI >> 4];
         tphk << (uint8_t)local_telemetry_bytes[SYS_ID_MAG >> 4];
+
+        // Temperatures
+        int8_t temperatures[7], max_core_temp = -128;
+        int sensor_temp;
+        memset(&temperatures, -128, sizeof(temperatures));
+        char filename[128], sensor_name[20];
+        for (i = 0; i < 4; i++) {
+            sprintf(filename, "/sys/class/hwmon/hwmon%d/name", i);
+            fp = fopen(filename, "r");
+            if (fp == NULL) { perror(NULL); continue; }
+            fscanf(fp, "%s", sensor_name);
+            fclose(fp);
+
+            if (strcmp(sensor_name, "coretemp") == 0) {
+                for (int j = 2; j <= 5; j++) {
+                    sprintf(filename, "/sys/class/hwmon/hwmon%d/temp%d_input", i, j);
+                    fp = fopen(filename, "r");
+                    if (fp == NULL) { perror(NULL); continue; }
+                    fscanf(fp, "%d", &sensor_temp);
+                    fclose(fp);
+                    temperatures[j+1] = sensor_temp / 1000;
+                    if (temperatures[j+1] > max_core_temp) max_core_temp = temperatures[j+1];
+                }
+            } else {
+                sprintf(filename, "/sys/class/hwmon/hwmon%d/temp1_input", i);
+                fp = fopen(filename, "r");
+                if (fp == NULL) { perror(NULL); continue; }
+                fscanf(fp, "%d", &sensor_temp);
+                fclose(fp);
+                if (strcmp(sensor_name, "acpitz") == 0) temperatures[0] = sensor_temp / 1000;
+                if (strcmp(sensor_name, "soc_dts0") == 0) temperatures[1] = sensor_temp / 1000;
+                if (strcmp(sensor_name, "soc_dts1") == 0) temperatures[2] = sensor_temp / 1000;
+            }
+        }
+        tphk << temperatures[0] << temperatures[1] << temperatures[2] << max_core_temp;
 
         tm_packet_queue << tphk;
 
@@ -1394,7 +1428,7 @@ void send_sbd_packet(uint8_t device_id)
 
     for (int i=0; i<255; i++) sbd_packet[i+3] = (counter++ % 254);
 
-    memcpy(sbd_packet+3, latest_housekeeping_packet, 34);
+    memcpy(sbd_packet+3, latest_housekeeping_packet, 39);
 
     sbd_packet[258] = 0x03;
 
