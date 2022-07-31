@@ -199,6 +199,31 @@ int32_t RingBuffer::smart_pop_booms_cmd(void *ptr)
     return -1;
 }
 
+int32_t RingBuffer::smart_pop_magnetometer(void *ptr)
+{
+    // local copy since there may be active writing
+    uint32_t this_write_index = this->write_index;
+
+    uint32_t this_size = (BUFFER_SIZE + this_write_index - this->read_index) % BUFFER_SIZE;
+
+    if(this_size < 2) return 0;
+
+    //printf("R/W: %d %d\n", this->read_index, this_write_index);
+
+    uint8_t byte1 = this->buffer[this->read_index];
+    uint8_t byte2 = this->buffer[(this->read_index + 1) % BUFFER_SIZE];
+
+    if((byte1 == 0xBF) && (byte2 == 0xAA)) {
+        uint8_t packet_size = 18;
+        if(this_size < packet_size) return 0;
+        return pop(ptr, packet_size);
+    }
+
+    // Not a valid header, so advance one byte and return an error
+    this->read_index = (this->read_index + 1) % BUFFER_SIZE;
+    return -1;
+}
+
 uint32_t RingBuffer::size()
 {
     return (uint32_t)((this->write_index - this->read_index) % BUFFER_SIZE);

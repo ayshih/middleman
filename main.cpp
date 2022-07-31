@@ -1062,27 +1062,32 @@ void *MagnetometerParserThread(void *threadargs)
 
     printf("MagnetometerParser thread #%d [system 0x%02X]\n", tid, my_data->system_id);
 
-    char packet_buffer[18];
+    char packet_buffer[1024];
 
     TelemetryPacket tp_maggroup(NULL);
     int counter = 0;
 
     while(!stop_message[tid])
     {
-        while(ring_buffer[device_id].size() >= 18) {
+        int packet_size;
+        while((packet_size = ring_buffer[device_id].smart_pop_magnetometer(packet_buffer)) != 0) {
+            if(packet_size == -1) {
+                fprintf(stderr, "Skipping a byte on device %d\n", device_id);
+                continue;
+            }
+
             if(counter == 0) {
                 tp_maggroup = TelemetryPacket(my_data->system_id, TM_MAGGROUP, 0, current_monotonic_time());  // TODO: needs counter
             }
 
-            ring_buffer[device_id].pop(packet_buffer, 18);
-            //for(int i=0; i<18; i++) printf("%02X ", (uint8_t)packet_buffer[i]);
+            //for(int i=0; i<packet_size; i++) printf("%02X ", (uint8_t)packet_buffer[i]);
             //printf("\n");
             counter++;
-            tp_maggroup.append_bytes(packet_buffer, 18);
+            tp_maggroup.append_bytes(packet_buffer, packet_size);
 
             if(counter == 4) {
                 tm_packet_queue << tp_maggroup;
-                memcpy(latest_magnetometer_packet, packet_buffer, 18);
+                memcpy(latest_magnetometer_packet, packet_buffer, packet_size);
                 counter = 0;
             }
         }

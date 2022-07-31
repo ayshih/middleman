@@ -33,6 +33,9 @@ class RingBuffer {
         // Reconstructed BOOMS command packets
         int32_t smart_pop_booms_cmd(void *ptr);
 
+        // MAG device
+        int32_t smart_pop_magnetometer(void *ptr);
+
         void clear();
 };
 
