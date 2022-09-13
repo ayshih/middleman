@@ -175,6 +175,8 @@ void *SIPParserThread(void *threadargs);
 void *GPSParserThread(void *threadargs);
 void *ImagerParserThread(void *threadargs);
 void *SpectrometerParserThread(void *threadargs);
+void *MagnetometerCommanderThread(void *threadargs);
+void *MagnetometerParserThread(void *threadargs);
 
 struct gps_for_pps_struct{
     uint8_t hour = 255;
@@ -999,6 +1001,27 @@ void *SerialListenerThread(void *threadargs)
 
     printLogTimestamp();
     printf("Device /dev/ttyS%d opened for system 0x%02X\n", device_id, my_data->system_id);
+
+    switch(my_data->system_id & 0xF0) {
+        case SYS_ID_SIP:
+            start_thread(SIPParserThread, my_data);
+            break;
+        case SYS_ID_GPS:
+            start_thread(GPSParserThread, my_data);
+            break;
+        case SYS_ID_MAG:
+            start_thread(MagnetometerCommanderThread, my_data);
+            start_thread(MagnetometerParserThread, my_data);
+            break;
+        case SYS_ID_IMG:
+            start_thread(ImagerParserThread, my_data);
+            break;
+        case SYS_ID_NAI:
+            start_thread(SpectrometerParserThread, my_data);
+            break;
+        default:
+            fprintf(stderr, "Unknown system ID (%02X) for serial device /dev/tty%d\n", my_data->system_id, device_id);
+    }
 
     char read_buffer[1024];
 
@@ -1891,26 +1914,6 @@ void start_all_workers()
         tdata.system_id = device_id_to_system_id[j];
         if(tdata.system_id != 255) {
             start_thread(SerialListenerThread, &tdata);
-            switch(tdata.system_id & 0xF0) {
-                case SYS_ID_SIP:
-                    start_thread(SIPParserThread, &tdata);
-                    break;
-                case SYS_ID_GPS:
-                    start_thread(GPSParserThread, &tdata);
-                    break;
-                case SYS_ID_MAG:
-                    start_thread(MagnetometerCommanderThread, &tdata);
-                    start_thread(MagnetometerParserThread, &tdata);
-                    break;
-                case SYS_ID_IMG:
-                    start_thread(ImagerParserThread, &tdata);
-                    break;
-                case SYS_ID_NAI:
-                    start_thread(SpectrometerParserThread, &tdata);
-                    break;
-                default:
-                    fprintf(stderr, "Unknown system ID (%02X) for serial device /dev/tty%d\n", tdata.system_id, j);
-            }
         }
     }
 
