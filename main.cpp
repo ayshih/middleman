@@ -107,8 +107,8 @@ float temp_py = 0, temp_roll = 0, temp_mb = 0;
 char ip_tm[20];
 uint8_t latest_housekeeping_packet[255];
 uint8_t latest_magnetometer_packet[18];
-uint8_t latest_imager_housekeeping[160];
-uint8_t latest_spectrometer_housekeeping[80];
+uint8_t latest_imager_housekeeping[154];
+uint8_t latest_spectrometer_housekeeping[54];
 
 uint32_t evtm_bps_cap = DEFAULT_EVTM_BPS_CAP;
 
@@ -177,6 +177,16 @@ void *ImagerParserThread(void *threadargs);
 void *SpectrometerParserThread(void *threadargs);
 void *MagnetometerCommanderThread(void *threadargs);
 void *MagnetometerParserThread(void *threadargs);
+
+struct gps_pos_struct{
+    uint8_t hour;
+    uint8_t minute;
+    uint8_t second;
+    double latitude;
+    double longitude;
+    uint16_t altitude;
+};
+struct gps_pos_struct gps_pos;
 
 struct gps_for_pps_struct{
     uint8_t hour = 255;
@@ -1133,7 +1143,6 @@ void *ImagerParserThread(void *threadargs)
     printf("ImagerParser thread #%d [system 0x%02X]\n", tid, my_data->system_id);
 
     char packet_buffer[1024];
-    uint8_t housekeeping[20];
 
     TelemetryPacket tp_eventgroup(my_data->system_id, TM_EVENTGROUP, 0, current_monotonic_time());  // TODO: needs counter
     int events_in_group = 0;
@@ -1183,9 +1192,19 @@ void *ImagerParserThread(void *threadargs)
                 tp_hk.append_bytes(packet_buffer, packet_size);
                 tm_packet_queue << tp_hk;
 
-                housekeeping[0] = my_data->system_id;
-                memcpy(latest_imager_housekeeping + 20 * (my_data->system_id & 0b111), housekeeping, 20);
-                memset(housekeeping, 0, 20);
+                switch (packet_type) {
+                    case 1:
+                    case 2:
+                    case 3:
+                    case 4:
+                        memcpy(latest_imager_housekeeping + 22 * (my_data->system_id & 0b111) + 2 * (packet_type - 1), packet_buffer + 4, 2);
+                        break;
+                    case 6:
+                        memcpy(latest_imager_housekeeping + 22 * (my_data->system_id & 0b111) + 8, packet_buffer + 2, 4);
+                        memcpy(latest_imager_housekeeping + 22 * (my_data->system_id & 0b111) + 12, packet_buffer + 16, 2);
+                        memcpy(latest_imager_housekeeping + 22 * (my_data->system_id & 0b111) + 14, packet_buffer + 8, 8);
+                        break;
+                }
             } else {
                 fprintf(stderr, "Unknown imager packet of type 0b%d%d%d\n", packet_type & 0b100 >> 2, packet_type & 0b010 >> 1, packet_type & 0b001);
                 imager_bad_bytes[my_data->system_id & 0b111] += packet_size;
@@ -1219,7 +1238,6 @@ void *SpectrometerParserThread(void *threadargs)
     printf("SpectrometerParser thread #%d [system 0x%02X]\n", tid, my_data->system_id);
 
     char packet_buffer[1024];
-    uint8_t housekeeping[20];
 
     TelemetryPacket tp_minorgroup(my_data->system_id, TM_MINORGROUP, 0, current_monotonic_time());  // TODO: needs counter
 
@@ -1250,10 +1268,22 @@ void *SpectrometerParserThread(void *threadargs)
 
             // Housekeeping
             switch (minor_frame_counter & 0b11111) {
-                case 7:
-                    housekeeping[0] = my_data->system_id;
-                    memcpy(latest_spectrometer_housekeeping + 20 * (my_data->system_id & 0b11), housekeeping, 20);
-                    memset(housekeeping, 0, 20);
+                case 0:
+                    memcpy(latest_spectrometer_housekeeping + 18 * (my_data->system_id & 0b11) + 10, packet_buffer+206, 2);
+                    memcpy(latest_spectrometer_housekeeping + 18 * (my_data->system_id & 0b11) + 14, packet_buffer+208, 2);
+                    break;
+                case 1:
+                    memcpy(latest_spectrometer_housekeeping + 18 * (my_data->system_id & 0b11) + 12, packet_buffer+206, 2);
+                    memcpy(latest_spectrometer_housekeeping + 18 * (my_data->system_id & 0b11) + 16, packet_buffer+208, 2);
+                    break;
+                case 2:
+                    memcpy(latest_spectrometer_housekeeping + 18 * (my_data->system_id & 0b11) + 4, packet_buffer+206, 4);
+                    break;
+                case 3:
+                    memcpy(latest_spectrometer_housekeeping + 18 * (my_data->system_id & 0b11) + 8, packet_buffer+206, 2);
+                    break;
+                case 4:
+                    memcpy(latest_spectrometer_housekeeping + 18 * (my_data->system_id & 0b11), packet_buffer+206, 4);
                     break;
             }
 
@@ -1380,6 +1410,13 @@ void *GPSParserThread(void *threadargs)
 
                 tm_packet_queue << tp_gps_pos;
 
+                gps_pos.hour = hour;
+                gps_pos.minute = minute;
+                gps_pos.second = second;
+                gps_pos.latitude = float(latitude);
+                gps_pos.longitude = float(longitude);
+                gps_pos.altitude = altitude;
+
                 if (hour == -1) {
                     printLogTimestamp();
                     printf("GPS packet missing information: %s", saved_buffer);
@@ -1476,23 +1513,52 @@ void send_sbd_packet(uint8_t device_id)
 
     for (int i=0; i<255; i++) sbd_packet[i+3] = (counter++ % 254);
 
-    memcpy(sbd_packet+3, latest_housekeeping_packet, 39);
+    // 21 bytes from latest housekeeping packet
+    memcpy(sbd_packet+3, latest_housekeeping_packet+8, 2);  // sequence number
+    memcpy(sbd_packet+5, latest_housekeeping_packet+16, 1);  // flag bitfield
+    memcpy(sbd_packet+6, latest_housekeeping_packet+18, 2+2+4);  // CPU usage, disk usage, and uptime
+    memcpy(sbd_packet+14, latest_housekeeping_packet+27, 1+4+2+1+1);  // bytes from subsystems and board temperature
+    memcpy(sbd_packet+23, latest_housekeeping_packet+38, 1);  // CPU temperature
 
-    memcpy(sbd_packet+3+40, latest_imager_housekeeping, 140);  // 7 imagers
-    //memset(latest_imager_housekeeping, 0, 160);
+    // 14 bytes from GPS information
+    memcpy(sbd_packet+24, &gps_pos.latitude, 4);
+    memcpy(sbd_packet+28, &gps_pos.longitude, 4);
+    memcpy(sbd_packet+32, &gps_pos.latitude, 2);
+    sbd_packet[34] = gps_for_pps.day_offset;
+    sbd_packet[35] = gps_pos.hour;
+    sbd_packet[36] = gps_pos.minute;
+    sbd_packet[37] = gps_pos.second;
 
-    memcpy(sbd_packet+3+180, latest_spectrometer_housekeeping, 60);  // 3 spectrometer pairs
-    //memset(latest_spectrometer_housekeeping, 0, 80);
+    // 154 bytes = 22 bytes per imager times 7 imagers
+    memcpy(sbd_packet+3+21+14, latest_imager_housekeeping, 154);
+    //memset(latest_imager_housekeeping, 0, 154);
 
-    memcpy(sbd_packet+3+240, latest_magnetometer_packet+2, 15);
+    // 54 bytes = 18 bytes per spectrometer pair times 3 spectrometer pairs
+    memcpy(sbd_packet+3+21+14+154, latest_spectrometer_housekeeping, 54);
+    //memset(latest_spectrometer_housekeeping, 0, 54);
+
+    // 12 bytes of magnetometer information (excluding ADC offset)
+    memcpy(sbd_packet+3+21+14+154+54, latest_magnetometer_packet+2, 12);
     //memset(latest_magnetometer_packet, 0, 18);
 
     sbd_packet[258] = 0x03;
 
     printf("Sending SBD packet to /dev/ttyS%d: ", device_id);
-    for (int i=0; i<259; i++) {
-        printf("%02X ", sbd_packet[i]);
+    for (int i=0; i<3; i++) printf("%02X ", sbd_packet[i]);
+    printf("\n");
+    for (int i=0; i<21; i++) printf("%02X ", sbd_packet[i+3]);
+    printf("\n");
+    for (int i=0; i<14; i++) printf("%02X ", sbd_packet[i+3+21]);
+    printf("\n");
+    for (int j=0; j<7; j++) {
+        for (int i=0; i<22; i++) printf("%02X ", sbd_packet[i+3+21+14+j*22]);
+        printf("\n");
     }
+    for (int j=0; j<3; j++) {
+        for (int i=0; i<18; i++) printf("%02X ", sbd_packet[i+3+21+14+154+j*18]);
+        printf("\n");
+    }
+    for (int i=0; i<12; i++) printf("%02X ", sbd_packet[i+3+21+14+154+54]);
     printf("\n");
 
     struct pollfd serial_poll;
