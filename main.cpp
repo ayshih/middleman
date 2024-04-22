@@ -182,8 +182,8 @@ struct gps_pos_struct{
     uint8_t hour;
     uint8_t minute;
     uint8_t second;
-    double latitude;
-    double longitude;
+    float latitude;
+    float longitude;
     uint16_t altitude;
 };
 struct gps_pos_struct gps_pos;
@@ -1523,7 +1523,7 @@ void send_sbd_packet(uint8_t device_id)
     // 14 bytes from GPS information
     memcpy(sbd_packet+24, &gps_pos.latitude, 4);
     memcpy(sbd_packet+28, &gps_pos.longitude, 4);
-    memcpy(sbd_packet+32, &gps_pos.latitude, 2);
+    memcpy(sbd_packet+32, &gps_pos.altitude, 2);
     sbd_packet[34] = gps_for_pps.day_offset;
     sbd_packet[35] = gps_pos.hour;
     sbd_packet[36] = gps_pos.minute;
