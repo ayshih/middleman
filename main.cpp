@@ -46,6 +46,7 @@
 #define TM_ACK          0x01
 #define TM_HOUSEKEEPING 0x02
 #define TM_IMG_STATS    0x0C
+#define TM_NDY          0xFF
 #define TM_GPS_PPS      0x60
 #define TM_GPS_POSITION 0x61
 #define TM_GPS_VELOCITY 0x62
@@ -1503,15 +1504,15 @@ void send_sbd_packet(uint8_t device_id)
 {
     sending_sbd_packets = true;
 
-    static uint64_t counter = 0;
+    static uint16_t counter = 0;
+
+    TelemetryPacket tp_ndy(SYS_ID_MM, TM_NDY, counter++, current_monotonic_time());
 
     uint8_t sbd_packet[259];
 
     sbd_packet[0] = 0x10;
     sbd_packet[1] = 0x53;
     sbd_packet[2] = 255;
-
-    for (int i=0; i<255; i++) sbd_packet[i+3] = (counter++ % 254);
 
     // 21 bytes from latest housekeeping packet
     memcpy(sbd_packet+3, latest_housekeeping_packet+8, 2);  // sequence number
@@ -1565,6 +1566,9 @@ void send_sbd_packet(uint8_t device_id)
     serial_poll.fd = device_fd[device_id];
     serial_poll.events = POLLOUT;
     polled_write(serial_poll.fd, &serial_poll, sbd_packet, 259);
+
+    tp_ndy.append_bytes(sbd_packet, 259);
+    tm_packet_queue << tp_ndy;
 }
 
 
